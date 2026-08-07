@@ -1,0 +1,22 @@
+# Padrões que NÃO podem aparecer no que é publicado.
+#
+# Copie para .publicar-proibido e preencha com os seus. Uma regex estendida
+# (ERE) por linha; linhas vazias e começadas por # são ignoradas. A busca é
+# case-insensitive. As regexes são unidas por "|" antes de rodar.
+#
+# O arquivo real fica FORA do versionamento de propósito: ele lista justamente
+# os termos que não podem sair daqui. Publicá-lo entregaria a lista inteira.
+
+# --- faixas de IP internas ---------------------------------------------------
+# Cuidado para não casar as faixas de exemplo usadas nos testes (10.0.x.x,
+# 10.99.x.x, 192.0.2.x, 203.0.113.x), senão a varredura acusa falso positivo.
+# 172\.16\.30\.
+# 10\.42\.[0-9]+\.
+
+# --- nomes de organização, sistema ou projeto --------------------------------
+# nome-do-orgao
+# nome-do-sistema
+
+# --- identificadores de pessoa ou credencial ---------------------------------
+# usuario\.de\.rede
+# nome-de-login

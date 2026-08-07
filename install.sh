@@ -27,7 +27,7 @@ sudo install -o root -g root -m 644 \
 
 # O template openfortivpn@.service do pacote usa %I no ExecStart. %I é o nome
 # da instância DESESCAPADO, e o unescape do systemd converte "-" em "/": um
-# perfil chamado vpn-foco vira /etc/openfortivpn/vpn/foco.conf, que não existe.
+# perfil chamado vpn-exemplo vira /etc/openfortivpn/vpn/exemplo.conf, inexistente.
 # O openfortivpn sai com 254 em milissegundos e o systemd desiste com "start
 # request repeated too quickly" — sem nenhuma pista da causa real.
 #

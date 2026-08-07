@@ -11,3 +11,7 @@ data/profiles.toml
 
 # Documentação de trabalho com dados de rede reais (auditorias, specs, planos).
 docs/
+
+# Lista de termos que não podem ser publicados — versioná-la entregaria a lista.
+# O modelo genérico é .publicar-proibido.example.
+.publicar-proibido
