@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gerenciador de VPNs
+Comment=Estado e controle das VPNs openfortivpn
+Exec=env PYTHONPATH=__VPN_MANAGER_SRC__ python3 -m vpn_manager.window
+Icon=network-vpn-symbolic
+Terminal=false
+Categories=Network;System;

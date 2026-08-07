@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Indicador de VPNs
+Exec=env PYTHONPATH=__VPN_MANAGER_SRC__ python3 -m vpn_manager.indicator
+Icon=network-vpn-symbolic
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

@@ -1,0 +1,29 @@
+# Exemplo de catálogo de perfis.
+#
+# Copie para /etc/vpn-manager/profiles.toml e preencha com as suas redes:
+#
+#     sudo install -m 644 data/profiles.example.toml /etc/vpn-manager/profiles.toml
+#     sudo nano /etc/vpn-manager/profiles.toml
+#
+# Cada [[profile]] corresponde a um /etc/openfortivpn/<id>.conf e à instância
+# systemd openfortivpn@<id>.service. Os valores abaixo são fictícios.
+
+[[profile]]
+id          = "vpn-exemplo"          # = nome do .conf e da instância systemd
+nome        = "Rede A"               # rótulo curto exibido na interface
+proposito   = "O que esta VPN alcança"
+redes       = ["10.0.0.0/24"]        # sub-redes que devem aparecer roteadas quando a VPN sobe
+checks      = [                      # portas testadas para dizer se o túnel está útil, não só up
+  { host = "10.0.0.10", porta = 443,   rotulo = "Serviço web" },
+  { host = "10.0.0.10", porta = 9100,  rotulo = "Serviço de mídia" },
+]
+
+[[profile]]
+id          = "vpn-exemplo-2"
+nome        = "Rede B"
+proposito   = "Servidores de aplicação"
+redes       = ["10.0.1.0/24", "10.0.2.0/24"]
+checks      = [
+  { host = "10.0.1.20", porta = 22, rotulo = "Servidor de produção" },
+  { host = "10.0.2.30", porta = 22, rotulo = "Servidor de homologação" },
+]

@@ -1,0 +1,11 @@
+// data/50-openfortivpn.rules
+// Autoriza gerenciar apenas as units openfortivpn@*.service, nenhuma outra do sistema.
+// Ancorado no fim (\.service$) para não casar openfortivpn@x.socket / .timer, que o
+// comentário original prometia excluir mas o regex antigo (sem fim ancorado) não excluía.
+// O guard `|| ""` evita exceção — e negação — se o detalhe `unit` vier ausente.
+polkit.addRule(function(action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units"
+      && (action.lookup("unit") || "").match(/^openfortivpn@[\w.-]+\.service$/)
+      && subject.user == "matheus")
+    return polkit.Result.YES;
+});

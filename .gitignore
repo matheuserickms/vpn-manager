@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+venv/
+
+# Catálogo real: contém as redes e hosts internos de quem usa.
+# O repositório carrega apenas data/profiles.example.toml.
+data/profiles.toml
+
+# Documentação de trabalho com dados de rede reais (auditorias, specs, planos).
+docs/
