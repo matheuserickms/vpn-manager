@@ -169,3 +169,61 @@ class TestFormDeLeitura:
             "gerenciado": True,
         }
         assert form_de_leitura(resposta).senha == ""
+
+
+# --------------------------------------------------------------------------
+# 4.2 / 4.3 — o que a interface oferece em cada estado
+# --------------------------------------------------------------------------
+
+from vpn_manager.editor_form import (  # noqa: E402
+    oferecer_reconectar,
+    pode_editar,
+    pode_remover,
+)
+from vpn_manager.models import State  # noqa: E402
+
+
+class TestPodeEditar:
+    @pytest.mark.parametrize(
+        "estado",
+        [State.ACTIVE, State.INACTIVE, State.PARTIAL, State.FAILED, State.UNCONFIGURED],
+    )
+    def test_permite_na_maioria_dos_estados(self, estado):
+        assert pode_editar(estado) is True
+
+    def test_bloqueia_perfil_externo(self):
+        """Externo é um openfortivpn rodando fora do systemd, com config que
+        o app não sabe de onde veio. Reescrever os artefatos por baixo dele
+        deixaria o processo vivo com configuração que não corresponde mais ao
+        disco."""
+        assert pode_editar(State.EXTERNAL) is False
+
+
+class TestPodeRemover:
+    @pytest.mark.parametrize("estado", [State.INACTIVE, State.FAILED, State.UNCONFIGURED])
+    def test_permite_quando_nao_ha_tunel(self, estado):
+        assert pode_remover(estado) is True
+
+    @pytest.mark.parametrize(
+        "estado", [State.ACTIVE, State.PARTIAL, State.CONNECTING, State.EXTERNAL]
+    )
+    def test_bloqueia_com_tunel_no_ar(self, estado):
+        """Apagar o .conf de um túnel ativo deixa a conexão órfã: ela continua
+        de pé, mas sem nada em disco que a explique. O helper recusa de todo
+        jeito; a interface não deve nem oferecer."""
+        assert pode_remover(estado) is False
+
+
+class TestOferecerReconectar:
+    @pytest.mark.parametrize("estado", [State.ACTIVE, State.PARTIAL])
+    def test_oferece_quando_o_tunel_esta_no_ar(self, estado):
+        """Salvar reescreve o .conf, mas o túnel de pé continua com a
+        configuração antiga em memória. Sem reconectar, a edição não tem
+        efeito — e não avisar isso faz o usuário achar que não funcionou."""
+        assert oferecer_reconectar(estado) is True
+
+    @pytest.mark.parametrize(
+        "estado", [State.INACTIVE, State.FAILED, State.UNCONFIGURED, State.EXTERNAL]
+    )
+    def test_nao_oferece_sem_tunel_proprio(self, estado):
+        assert oferecer_reconectar(estado) is False

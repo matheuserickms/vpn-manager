@@ -76,9 +76,11 @@ def _rota_verificada(status) -> bool:
 class ProfileRow(Adw.ExpanderRow):
     """Uma linha por perfil. Seção 4.2 do documento de layout."""
 
-    def __init__(self, status, on_action, on_journal):
+    def __init__(self, status, on_action, on_journal, on_edit=None, on_delete=None):
         super().__init__()
         self._on_action = on_action
+        self._on_edit = on_edit
+        self._on_delete = on_delete
         # Item 3 da rodada de fechamento pré-merge: callback pra abrir o
         # diagnóstico do journal (só usado quando `status.state is FAILED`
         # constrói a `JournalRow` — ver `_reconstruir_corpo`).
@@ -105,10 +107,27 @@ class ProfileRow(Adw.ExpanderRow):
         self._pilha.add_named(ocupado, "busy")
         self._pilha.add_named(Gtk.Box(), "none")
 
+        # Editar e remover ficam fora da `_pilha`: a pilha troca para
+        # "busy" durante uma ação, e esconder o acesso à configuração
+        # junto seria efeito colateral sem motivo. O que os desabilita é
+        # o estado do perfil, não haver ação em curso.
+        self._editar = Gtk.Button(icon_name="document-edit-symbolic",
+                                  tooltip_text="Editar perfil",
+                                  css_classes=["flat"])
+        self._editar.update_property([Gtk.AccessibleProperty.LABEL], ["Editar perfil"])
+        self._editar.connect("clicked", self._clicou_editar)
+        self._remover = Gtk.Button(icon_name="user-trash-symbolic",
+                                   tooltip_text="Remover perfil",
+                                   css_classes=["flat"])
+        self._remover.update_property([Gtk.AccessibleProperty.LABEL], ["Remover perfil"])
+        self._remover.connect("clicked", self._clicou_remover)
+
         sufixo = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
                          valign=Gtk.Align.CENTER)
         sufixo.append(self._rotulo)
         sufixo.append(self._pilha)
+        sufixo.append(self._editar)
+        sufixo.append(self._remover)
         self.add_suffix(sufixo)
 
         self._linhas_corpo = []
@@ -132,13 +151,25 @@ class ProfileRow(Adw.ExpanderRow):
         if acao:
             self._on_action(self._status, acao)
 
+    def _clicou_editar(self, _botao):
+        if self._on_edit is not None:
+            self._on_edit(self._status)
+
+    def _clicou_remover(self, _botao):
+        if self._on_delete is not None:
+            self._on_delete(self._status)
+
     def update(self, status):
         self._status = status
         icone, classe, rotulo = APRESENTACAO[status.state]
 
         self.set_title(GLib.markup_escape_text(status.profile.name))
         self.set_subtitle(GLib.markup_escape_text(status.profile.purpose))
-        self.set_sensitive(status.state is not State.UNCONFIGURED)
+        # Antes esta linha ficava insensível em `nao_configurado`, quando
+        # não havia o que fazer a respeito. Agora há: é exatamente o
+        # estado em que "Editar" resolve o problema (perfil no catálogo
+        # sem .conf), então a linha precisa continuar clicável.
+        self.set_sensitive(True)
         # `not status.read_ok` força a expansão mesmo em estados que
         # normalmente ficam recolhidos (`ativo`/`inativo`): é quando a linha
         # de diagnóstico abaixo ("Não foi possível confirmar…") mais precisa
@@ -176,6 +207,18 @@ class ProfileRow(Adw.ExpanderRow):
                     ["suggested-action"] if status.state is State.EXTERNAL else []
                 )
                 self._pilha.set_visible_child_name("idle")
+
+        from .editor_form import pode_editar, pode_remover
+        self._editar.set_sensitive(pode_editar(status.state))
+        self._remover.set_sensitive(pode_remover(status.state))
+        self._editar.set_tooltip_text(
+            "Editar perfil" if pode_editar(status.state)
+            else "Não dá para editar um perfil que roda fora do systemd"
+        )
+        self._remover.set_tooltip_text(
+            "Remover perfil" if pode_remover(status.state)
+            else "Desconecte antes de remover"
+        )
 
         self._reconstruir_corpo(status)
 
@@ -308,6 +351,7 @@ class VpnWindow(Adw.ApplicationWindow):
         self.set_size_request(360, 400)
         self._perfis = perfis
         self._linhas = {}
+        self._ultimos_status = []
         # Item 2 (Important) da rodada de fechamento pré-merge: mesma guarda
         # de concorrência que `indicator.py` já tinha (Task 6) — `True`
         # enquanto há uma leitura em voo (thread rodando ou idle_add
@@ -331,6 +375,13 @@ class VpnWindow(Adw.ApplicationWindow):
                                action_name="win.refresh")
         atualizar.update_property([Gtk.AccessibleProperty.LABEL], ["Atualizar estado"])
         cabecalho.pack_start(atualizar)
+
+        novo = Gtk.Button(icon_name="list-add-symbolic",
+                          tooltip_text="Novo perfil de VPN")
+        novo.update_property([Gtk.AccessibleProperty.LABEL], ["Novo perfil de VPN"])
+        novo.connect("clicked", lambda *_: self.abrir_editor(None))
+        cabecalho.pack_end(novo)
+
         barra.add_top_bar(cabecalho)
 
         # Item 5 da rodada de fechamento pré-merge: o tooltip acima promete
@@ -462,6 +513,9 @@ class VpnWindow(Adw.ApplicationWindow):
     def _aplicar_refresh(self, perfis, resultados):
         self._refresh_em_andamento = False
         self._perfis = perfis
+        # Guardado para que uma ação disparada de fora da linha (salvar
+        # com reconexão, remover) encontre o status sem reler tudo.
+        self._ultimos_status = list(resultados)
 
         # Item 6: remove linhas de perfis que saíram do catálogo nesta
         # releitura — sem isso, tirar um `[[profile]]` do TOML deixaria a
@@ -480,7 +534,9 @@ class VpnWindow(Adw.ApplicationWindow):
             if status.profile.id in self._linhas:
                 self._linhas[status.profile.id].update(status)
             else:
-                linha = ProfileRow(status, self._acao, self._abrir_diagnostico)
+                linha = ProfileRow(status, self._acao, self._abrir_diagnostico,
+                                   on_edit=self.abrir_editor,
+                                   on_delete=self.confirmar_remocao)
                 self._linhas[status.profile.id] = linha
                 self._grupo.add(linha)
 
@@ -576,6 +632,85 @@ class VpnWindow(Adw.ApplicationWindow):
             self._toasts.add_toast(Adw.Toast(title=resultado.message, timeout=6))
         self.refresh()
         return GLib.SOURCE_REMOVE
+
+    def abrir_editor(self, status):
+        """Abre o diálogo de perfil. `status=None` cria um perfil novo.
+
+        Editar exige ler o `.conf`, que é 600 — só o helper enxerga. Por isso
+        a leitura vai para uma thread: `pkexec` pode ficar parado esperando a
+        senha, e isso na thread do GLib congelaria a janela.
+        """
+        from .editor import EditorPerfil
+        from .editor_form import form_vazio
+
+        if status is None:
+            EditorPerfil(pai=self, form=form_vazio(), criando=True,
+                         ao_salvar=self._depois_de_salvar).present()
+            return
+
+        pid = status.profile.id
+        estado = status.state
+
+        def trabalho():
+            from . import profile_client
+            from .editor_form import form_de_leitura
+
+            try:
+                form = form_de_leitura(profile_client.read(pid))
+                erro = None
+            except Exception as e:  # noqa: BLE001
+                form, erro = None, e
+            GLib.idle_add(self._abrir_editor_com, form, erro, estado)
+
+        import threading
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _abrir_editor_com(self, form, erro, estado):
+        from .editor import EditorPerfil
+        from .editor_form import oferecer_reconectar
+
+        if erro is not None:
+            self.avisar(f"Não foi possível ler o perfil: {erro}")
+            return GLib.SOURCE_REMOVE
+
+        EditorPerfil(
+            pai=self,
+            form=form,
+            criando=False,
+            # Item 4.3: com o túnel no ar, salvar reescreve o .conf mas a
+            # conexão viva continua com a configuração antiga em memória.
+            # Sem reconectar, a edição não tem efeito nenhum.
+            reconectar_apos_salvar=oferecer_reconectar(estado),
+            ao_salvar=self._depois_de_salvar,
+        ).present()
+        return GLib.SOURCE_REMOVE
+
+    def _depois_de_salvar(self, pid, reconectar=False):
+        """Chamado pelo editor quando o helper aceitou a mudança."""
+        self._toasts.add_toast(Adw.Toast(title=f"Perfil {pid} salvo", timeout=3))
+        if reconectar:
+            status = next(
+                (s for s in self._ultimos_status if s.profile.id == pid), None
+            )
+            if status is not None:
+                self._acao(status, "restart")
+                return
+        self.refresh()
+
+    def avisar(self, mensagem: str):
+        """Toast de erro. Usado pelo editor, que não tem acesso ao overlay."""
+        self._toasts.add_toast(Adw.Toast(title=mensagem, timeout=6))
+
+    def confirmar_remocao(self, status):
+        """Remoção pede o `id` digitado: é a única ação sem volta da interface
+        (decisão D5). O snapshot no undo existe, mas não é exposto aqui."""
+        from .editor import DialogoRemocao
+
+        DialogoRemocao(pai=self, status=status, ao_remover=self._depois_de_remover).present()
+
+    def _depois_de_remover(self, pid):
+        self._toasts.add_toast(Adw.Toast(title=f"Perfil {pid} removido", timeout=3))
+        self.refresh()
 
     def _abrir_diagnostico(self, status):
         """Item 3 da rodada de fechamento pré-merge: chamado pela `JournalRow`

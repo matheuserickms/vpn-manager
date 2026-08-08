@@ -126,14 +126,14 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       *Aceite:* testes das funções de formulário sem importar GTK; o diálogo usa
       o `_instalar_gi_falso()` de `test_window.py`.
 
-- [ ] **4.2 Integração na `window.py` (M)**
+- [x] **4.2 Integração na `window.py` (M)**
       Botão "+" no header, menu por linha e o botão "Configurar…" no estado
       `nao_configurado`. Nada de subprocess na thread do GLib — seguir o padrão
       já documentado no arquivo. — §11
       *Aceite:* a janela não congela durante um salvamento; o estado da lista
       atualiza sozinho depois.
 
-- [ ] **4.3 Editar perfil conectado (P)**
+- [x] **4.3 Editar perfil conectado (P)**
       Salvar nunca derruba conexão. Oferecer "Salvar" e "Salvar e reconectar",
       encadeando o `vpnctl.restart` existente. `delete` e edição de perfil
       `externo` bloqueados. — §9

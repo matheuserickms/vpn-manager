@@ -51,12 +51,15 @@ class EditorPerfil:
     """Diálogo de perfil. `criando=False` significa edição de perfil existente."""
 
     def __init__(self, *, pai, cliente=profile_client, form: Form | None = None,
-                 criando: bool = True, ao_salvar=None):
+                 criando: bool = True, ao_salvar=None,
+                 reconectar_apos_salvar: bool = False):
         self._pai = pai
         self._cliente = cliente
         self._form = form or form_vazio()
         self._criando = criando
         self._ao_salvar = ao_salvar
+        # Só faz sentido editando: um perfil recém-criado não tem túnel no ar.
+        self._reconectar = reconectar_apos_salvar and not criando
 
         # Renomear muda o nome da unit, do .conf e do script; um perfil
         # conectado ficaria órfão. Está fora de escopo por decisão do design.
@@ -171,7 +174,7 @@ class EditorPerfil:
             if self._dialogo is not None:
                 self._dialogo.close()
             if self._ao_salvar is not None:
-                self._ao_salvar(pid)
+                self._ao_salvar(pid, reconectar=self._reconectar)
             return GLib.SOURCE_REMOVE
 
         campo = _traduzir_campo(erro.campo)
@@ -191,6 +194,102 @@ class EditorPerfil:
                 linha.set_subtitle(erros[campo])
             else:
                 linha.remove_css_class("error")
+
+    def present(self):
+        if self._dialogo is not None and self._pai is not None:
+            self._dialogo.present(self._pai)
+
+
+def confirmacao_valida(digitado: str, pid: str) -> bool:
+    """A remoção só prossegue se o usuário digitar o id exato.
+
+    Sensível a maiúscula de propósito: o id é minúsculo por construção, então
+    aceitar variação seria abrir espaço para confirmar no automático — o que
+    anula a razão de existir da confirmação.
+    """
+    return digitado.strip() == pid
+
+
+class DialogoRemocao:
+    """Confirmação de remoção (decisão D5).
+
+    Remover apaga o `.conf`, o script de rotas e a entrada do catálogo. Há
+    cópia no undo, mas ela não é exposta pela interface — então, do ponto de
+    vista de quem clica, é irreversível.
+    """
+
+    def __init__(self, *, pai, status, cliente=profile_client, ao_remover=None):
+        self._pai = pai
+        self._status = status
+        self._cliente = cliente
+        self._ao_remover = ao_remover
+        self._pid = status.profile.id
+        self.erro: str | None = None
+
+        self._dialogo = None
+        self._entrada = None
+        if pai is not None:
+            self._montar()
+
+    def _montar(self):
+        self._dialogo = Adw.AlertDialog(
+            heading=f"Remover {self._status.profile.name}?",
+            body=(
+                f"Isto apaga a configuração, o script de rotas e a entrada do "
+                f"catálogo do perfil {self._pid}.\n\n"
+                f"Digite {self._pid} para confirmar."
+            ),
+        )
+        self._entrada = Adw.EntryRow(title="Identificador do perfil")
+        self._dialogo.set_extra_child(self._entrada)
+        self._dialogo.add_response("cancelar", "Cancelar")
+        self._dialogo.add_response("remover", "Remover")
+        self._dialogo.set_response_appearance("remover", Adw.ResponseAppearance.DESTRUCTIVE)
+        self._dialogo.set_default_response("cancelar")
+        self._dialogo.set_close_response("cancelar")
+        self._dialogo.connect("response", self._respondeu)
+
+    def _respondeu(self, _dialogo, resposta):
+        if resposta != "remover":
+            return
+        digitado = self._entrada.get_text() if self._entrada is not None else ""
+        self.remover(digitado)
+
+    def remover(self, digitado: str):
+        if not confirmacao_valida(digitado, self._pid):
+            self.erro = "o identificador digitado não confere"
+            if self._pai is not None:
+                self._pai.avisar(self.erro)
+            return
+
+        pid = self._pid
+
+        def trabalho():
+            try:
+                self._cliente.delete(pid)
+                erro = None
+            except profile_client.ClientError as e:
+                erro = e
+            except Exception as e:  # noqa: BLE001
+                erro = profile_client.ClientError(f"erro inesperado: {type(e).__name__}: {e}")
+            GLib.idle_add(self._terminou, pid, erro)
+
+        if self._pai is None:
+            trabalho()
+            return
+
+        import threading
+
+        threading.Thread(target=trabalho, daemon=True).start()
+
+    def _terminou(self, pid, erro):
+        if erro is not None:
+            self.erro = str(erro)
+            if self._pai is not None:
+                self._pai.avisar(str(erro))
+        elif self._ao_remover is not None:
+            self._ao_remover(pid)
+        return GLib.SOURCE_REMOVE
 
     def present(self):
         if self._dialogo is not None and self._pai is not None:

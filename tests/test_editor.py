@@ -10,7 +10,7 @@ gi_stub.instalar()
 
 import pytest  # noqa: E402
 
-from vpn_manager.editor import EditorPerfil  # noqa: E402
+from vpn_manager.editor import EditorPerfil, confirmacao_valida  # noqa: E402
 from vpn_manager.editor_form import Form  # noqa: E402
 from vpn_manager.profile_client import ClientError  # noqa: E402
 
@@ -104,7 +104,7 @@ class TestSalvar:
         avisos = []
         ed = EditorPerfil(
             pai=None, cliente=cliente, form=FORM_OK, criando=True,
-            ao_salvar=lambda pid: avisos.append(pid),
+            ao_salvar=lambda pid, reconectar=False: avisos.append(pid),
         )
 
         ed.salvar()
@@ -116,7 +116,7 @@ class TestSalvar:
         avisos = []
         ed = EditorPerfil(
             pai=None, cliente=cliente, form=FORM_OK, criando=True,
-            ao_salvar=lambda pid: avisos.append(pid),
+            ao_salvar=lambda pid, reconectar=False: avisos.append(pid),
         )
 
         ed.salvar()
@@ -134,3 +134,67 @@ class TestIdImutavel:
     def test_criando_deixa_definir_o_id(self):
         ed = EditorPerfil(pai=None, cliente=ClienteFalso(), form=FORM_OK, criando=True)
         assert ed.id_editavel is True
+
+
+class TestReconectarAposSalvar:
+    """Item 4.3: com o túnel no ar, salvar reescreve o .conf mas a conexão
+    viva segue com a configuração antiga em memória."""
+
+    def test_avisa_quem_chamou_que_precisa_reconectar(self):
+        cliente = ClienteFalso()
+        recebidos = []
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=False,
+            reconectar_apos_salvar=True,
+            ao_salvar=lambda pid, reconectar=False: recebidos.append((pid, reconectar)),
+        )
+
+        ed.salvar()
+
+        assert recebidos == [("vpn-exemplo", True)]
+
+    def test_sem_tunel_no_ar_nao_pede_reconexao(self):
+        cliente = ClienteFalso()
+        recebidos = []
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=False,
+            reconectar_apos_salvar=False,
+            ao_salvar=lambda pid, reconectar=False: recebidos.append((pid, reconectar)),
+        )
+
+        ed.salvar()
+
+        assert recebidos == [("vpn-exemplo", False)]
+
+    def test_criando_nunca_pede_reconexao(self):
+        cliente = ClienteFalso()
+        recebidos = []
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=True,
+            ao_salvar=lambda pid, reconectar=False: recebidos.append((pid, reconectar)),
+        )
+
+        ed.salvar()
+
+        assert recebidos == [("vpn-exemplo", False)]
+
+
+class TestConfirmacaoDeRemocao:
+    """Decisão D5: remover exige digitar o id."""
+
+    def test_id_exato_confirma(self):
+        assert confirmacao_valida("vpn-exemplo", "vpn-exemplo") is True
+
+    def test_id_errado_nao_confirma(self):
+        assert confirmacao_valida("vpn-outro", "vpn-exemplo") is False
+
+    def test_ignora_espaco_em_volta(self):
+        assert confirmacao_valida("  vpn-exemplo  ", "vpn-exemplo") is True
+
+    def test_vazio_nao_confirma(self):
+        assert confirmacao_valida("", "vpn-exemplo") is False
+
+    def test_e_sensivel_a_maiuscula(self):
+        """O id é minúsculo por construção; aceitar variação convidaria a
+        confirmar no automático."""
+        assert confirmacao_valida("VPN-EXEMPLO", "vpn-exemplo") is False

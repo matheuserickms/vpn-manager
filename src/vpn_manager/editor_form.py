@@ -10,6 +10,8 @@ helper, que roda como root e não confia neste processo.
 
 from typing import NamedTuple
 
+from .models import State
+
 from .profile_store import (
     ValidationError,
     validate_host,
@@ -184,3 +186,41 @@ def form_de_leitura(resposta: dict) -> Form:
             for c in p.get("checks", [])
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Política de interface: o que oferecer em cada estado.
+#
+# Vive aqui, e não na window, para poder ser testado sem GTK — e para que a
+# regra exista num lugar só, em vez de espalhada por condicionais no meio da
+# montagem de widgets.
+# ---------------------------------------------------------------------------
+
+# Um openfortivpn rodando fora do systemd: o app não sabe de onde veio a
+# configuração dele. Reescrever os artefatos por baixo do processo vivo o
+# deixaria com configuração que não corresponde mais ao disco.
+_SEM_EDICAO = frozenset({State.EXTERNAL})
+
+# Apagar o .conf de um túnel no ar deixa a conexão órfã — de pé, mas sem nada
+# em disco que a explique. O helper recusa de todo jeito; a interface não
+# oferece, para o usuário não descobrir isso no meio do caminho.
+_SEM_REMOCAO = frozenset(
+    {State.ACTIVE, State.PARTIAL, State.CONNECTING, State.EXTERNAL}
+)
+
+# Salvar reescreve o .conf, mas o túnel de pé segue com a configuração antiga
+# em memória. Sem reconectar, a edição não tem efeito nenhum — e não avisar
+# isso faz o usuário concluir que o programa não funcionou.
+_PRECISA_RECONECTAR = frozenset({State.ACTIVE, State.PARTIAL})
+
+
+def pode_editar(estado: State) -> bool:
+    return estado not in _SEM_EDICAO
+
+
+def pode_remover(estado: State) -> bool:
+    return estado not in _SEM_REMOCAO
+
+
+def oferecer_reconectar(estado: State) -> bool:
+    return estado in _PRECISA_RECONECTAR
