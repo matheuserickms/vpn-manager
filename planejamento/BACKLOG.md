@@ -117,7 +117,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
 ## Fase 4 — Interface
 
-- [ ] **4.1 `editor.py`: diálogo de criar e editar (G)**
+- [x] **4.1 `editor.py`: diálogo de criar e editar (G)**
       Lógica de formulário em funções puras, testáveis sem GTK. Campo de senha
       vazio com placeholder "manter a atual" na edição; ausência ou sentinela
       significa preservar. `set-routes`, `set-dns` e `pppd-ipparam` não são
