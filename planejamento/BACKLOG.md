@@ -64,7 +64,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
 ## Fase 2 — Fronteira privilegiada
 
-- [ ] **2.1 Protocolo do helper (P)**
+- [x] **2.1 Protocolo do helper (P)**
       Request/response JSON versionado, cinco verbos, limite de 64 KiB e de 32
       redes/checks. Fail-closed: chave desconhecida é erro. O verbo `read`
       devolve sentinela no lugar da senha — ela nunca volta ao processo sem
@@ -72,7 +72,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       *Aceite:* request com campo extra, com versão futura e acima do limite são
       todos rejeitados.
 
-- [ ] **2.2 `helper_main.py` (M)**
+- [x] **2.2 `helper_main.py` (M)**
       `main()` fino sobre `profile_store`. Revalida tudo o que vem do stdin — o
       chamador pode ser qualquer processo que convenceu o polkit. Só escreve nos
       três caminhos derivados do `id`; não existe parâmetro de caminho no
@@ -81,7 +81,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       *Aceite:* `helper_main(stdin, stdout, paths)` chamável direto no teste, sem
       subprocess e sem root.
 
-- [ ] **2.3 `profile_client.py` (P)**
+- [x] **2.3 `profile_client.py` (P)**
       Lado do usuário: monta o request, invoca `pkexec`, traduz erros reusando
       `vpnctl._mensagem_autorizacao_negada`. Senha viaja **só por stdin** —
       nunca argv, porque `/proc/*/cmdline` é público; nunca arquivo temporário.
