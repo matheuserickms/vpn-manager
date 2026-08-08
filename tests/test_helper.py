@@ -218,3 +218,126 @@ class TestFronteiraDeSeguranca:
         _, resp = chamar({"versao": VERSAO, "op": "create", "perfil": mau}, p)
         assert resp["ok"] is False
         assert "erro" in resp
+
+
+CONF_MANUAL = """\
+host = vpn.exemplo.com
+port = 443
+username = usuario
+password = senha-antiga
+set-routes = 0
+pppd-ipparam = vpn-exemplo
+half-internet-routes = 1
+persistent = 10
+"""
+
+
+class TestAssume:
+    """Item 5.1: adotar um .conf escrito à mão, sem destruir o que a
+    interface não entende."""
+
+    def _com_conf_manual(self, tmp_path, script=True):
+        p = paths_de_teste(tmp_path)
+        p.conf_dir.mkdir(parents=True)
+        (p.conf_dir / "vpn-exemplo.conf").write_text(CONF_MANUAL)
+        if script:
+            p.ip_up_dir.mkdir(parents=True)
+            antigo = p.ip_up_dir / "51manual"
+            # Script realista: o guard por ipparam é como ele sabe a qual
+            # túnel pertence — é por ele que a detecção o encontra.
+            antigo.write_text(
+                '#!/bin/sh\n[ "$6" = "vpn-exemplo" ] || exit 0\n'
+                "ip route add 10.0.0.0/24 dev $1\n"
+            )
+            antigo.chmod(0o755)
+        return p
+
+    def test_assume_gera_os_artefatos_gerenciados(self, tmp_path):
+        p = self._com_conf_manual(tmp_path)
+        codigo, resp = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "51manual"}, p
+        )
+        assert codigo == 0, resp
+        assert (p.ip_up_dir / "50vpnmgr-vpn-exemplo").exists()
+        assert [x.id for x in load_catalog(p.catalog)] == ["vpn-exemplo"]
+
+    def test_preserva_a_senha_do_conf_manual(self, tmp_path):
+        """Assumir não pode exigir que o usuário lembre a senha que já está
+        no arquivo."""
+        p = self._com_conf_manual(tmp_path)
+        req = dict(PERFIL_REQ, senha=SENTINELA_SENHA)
+        chamar({"versao": VERSAO, "op": "assume", "perfil": req, "confirmar": "51manual"}, p)
+        assert "password = senha-antiga" in (p.conf_dir / "vpn-exemplo.conf").read_text()
+
+    def test_preserva_diretivas_que_a_interface_nao_conhece(self, tmp_path):
+        p = self._com_conf_manual(tmp_path)
+        chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "51manual"}, p
+        )
+        texto = (p.conf_dir / "vpn-exemplo.conf").read_text()
+        assert "half-internet-routes = 1" in texto
+        assert "persistent = 10" in texto
+
+    def test_move_o_script_antigo_para_o_undo(self, tmp_path):
+        """Decisão D3: dois scripts injetando rota para o mesmo túnel é
+        exatamente o tipo de duplicata que o projeto existe para evitar."""
+        p = self._com_conf_manual(tmp_path)
+        chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "51manual"}, p
+        )
+        assert not (p.ip_up_dir / "51manual").exists()
+        assert list(p.undo_dir.rglob("51manual"))
+
+    def test_sem_confirmacao_nao_move_o_script_antigo(self, tmp_path):
+        """Remover algo escrito à mão exige confirmação nominal."""
+        p = self._com_conf_manual(tmp_path)
+        codigo, resp = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ}, p
+        )
+        assert codigo == 1
+        assert (p.ip_up_dir / "51manual").exists()
+
+    def test_recusa_perfil_conectado(self, tmp_path):
+        """O ipparam antigo continua na memória do processo vivo; somado a
+        `persistent`, o redial voltaria sem as rotas novas."""
+        p = self._com_conf_manual(tmp_path)
+        codigo, resp = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "51manual"},
+            p,
+            unidade_ativa=True,
+        )
+        assert codigo == 1
+        assert "desconect" in resp["detalhe"].lower() or "ativa" in resp["detalhe"].lower()
+
+    def test_recusa_perfil_que_nao_existe(self, tmp_path):
+        codigo, _ = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "x"},
+            paths_de_teste(tmp_path),
+        )
+        assert codigo == 1
+
+    def test_conf_ja_gerenciado_nao_precisa_ser_assumido(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        chamar({"versao": VERSAO, "op": "create", "perfil": PERFIL_REQ}, p)
+        codigo, resp = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "x"}, p
+        )
+        assert codigo == 1
+        assert "gerenciado" in resp["detalhe"].lower()
+
+
+    def test_script_que_nao_menciona_o_perfil_nao_e_detectado(self, tmp_path):
+        """Limite conhecido: a detecção é por menção ao ipparam. Um script
+        que instala rota sem citar o perfil passa despercebido e continua
+        rodando ao lado do gerado — o `assume` não tem como adivinhar."""
+        p = self._com_conf_manual(tmp_path, script=False)
+        p.ip_up_dir.mkdir(parents=True, exist_ok=True)
+        anonimo = p.ip_up_dir / "51anonimo"
+        anonimo.write_text("#!/bin/sh\nip route add 10.0.0.0/24 dev $1\n")
+
+        codigo, _ = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ}, p
+        )
+
+        assert codigo == 0
+        assert anonimo.exists()

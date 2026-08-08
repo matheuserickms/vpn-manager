@@ -240,21 +240,41 @@ def _toml_str(valor: str) -> str:
     return '"' + valor.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_toml(perfis: list[dict]) -> str:
+def render_toml(perfis: list[dict], comentarios: dict | None = None) -> str:
     """Monta o /etc/vpn-manager/profiles.toml.
 
     A senha NUNCA entra aqui: o catálogo é legível por todos (644) e a
     credencial existe só no .conf 600.
+
+    `comentarios` vem de `extrair_comentarios` sobre o arquivo atual.
+    Reescrever o catálogo inteiro apagaria as anotações de quem o mantém
+    à mão — os dados sobreviveriam, o conhecimento não.
     """
-    blocos = [MARCADOR, ""]
+    comentarios = comentarios or {}
+    inline = comentarios.get("inline", {})
+    topo = comentarios.get("topo", [])
+
+    blocos = list(topo)
+    if topo:
+        blocos.append("")
+    blocos += [MARCADOR, ""]
     for perfil in perfis:
         campos = _campos_validados(perfil)
+        pid = campos["id"]
+
+        def com(campo, linha):
+            """Recoloca o comentário que este campo tinha, se tinha."""
+            sufixo = inline.get((pid, campo))
+            return f"{linha}        {sufixo}" if sufixo else linha
+
         blocos.append("[[profile]]")
-        blocos.append(f"id          = {_toml_str(campos['id'])}")
-        blocos.append(f"nome        = {_toml_str(campos['nome'])}")
-        blocos.append(f"proposito   = {_toml_str(campos['proposito'])}")
+        blocos.append(com("id", f"id          = {_toml_str(pid)}"))
+        blocos.append(com("nome", f"nome        = {_toml_str(campos['nome'])}"))
+        blocos.append(
+            com("proposito", f"proposito   = {_toml_str(campos['proposito'])}")
+        )
         redes = ", ".join(_toml_str(r) for r in campos["redes"])
-        blocos.append(f"redes       = [{redes}]")
+        blocos.append(com("redes", f"redes       = [{redes}]"))
         if campos["checks"]:
             blocos.append("checks      = [")
             for c in campos["checks"]:
@@ -318,27 +338,53 @@ def _escrever_atomico(destino: Path, conteudo: str, modo: int, replace=os.replac
         raise
 
 
-def _snapshot(paths: Paths, pid: str) -> dict[Path, bytes | None]:
-    """Guarda o conteúdo atual dos arquivos que serão tocados.
+def _snapshot(paths: Paths, pid: str) -> dict[Path, tuple[bytes, int] | None]:
+    """Guarda conteúdo E modo dos arquivos que serão tocados.
 
     `None` significa "não existia" — precisamos distinguir isso de "existia
     vazio" para o rollback saber se apaga ou restaura.
+
+    O modo vai junto porque adivinhá-lo na volta erra: o script de ip-up.d
+    precisa ser executável (run-parts ignora o que não é), e restaurá-lo como
+    644 faria as rotas pararem de ser instaladas em silêncio.
     """
-    estado: dict[Path, bytes | None] = {}
+    estado: dict[Path, tuple[bytes, int] | None] = {}
     for alvo in (paths.conf(pid), paths.script(pid), paths.catalog):
-        estado[alvo] = alvo.read_bytes() if alvo.exists() else None
+        if alvo.exists():
+            estado[alvo] = (alvo.read_bytes(), alvo.stat().st_mode & 0o777)
+        else:
+            estado[alvo] = None
     return estado
 
 
-def _restaurar(estado: dict[Path, bytes | None]) -> None:
-    for alvo, conteudo in estado.items():
-        if conteudo is None:
+def _restaurar(estado: dict[Path, tuple[bytes, int] | None]) -> None:
+    for alvo, guardado in estado.items():
+        if guardado is None:
             alvo.unlink(missing_ok=True)
-        else:
-            modo = 0o600 if alvo.suffix == ".conf" else 0o644
-            alvo.parent.mkdir(parents=True, exist_ok=True)
-            alvo.write_bytes(conteudo)
-            os.chmod(alvo, modo)
+            continue
+        conteudo, modo = guardado
+        # Mesma escrita atômica do caminho feliz, e pelo mesmo motivo: um
+        # `write_bytes` direto ATRAVESSA symlink, então um link plantado no
+        # destino faria o rollback escrever no alvo dele.
+        _escrever_bytes_atomico(alvo, conteudo, modo)
+
+
+def _escrever_bytes_atomico(destino: Path, conteudo: bytes, modo: int) -> None:
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=destino.parent, prefix=f".{destino.name}.")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(conteudo)
+        os.chmod(tmp, modo)
+        # `os.replace` substitui a ENTRADA DE DIRETÓRIO; se o destino for um
+        # symlink, o link é trocado pelo arquivo, e o alvo dele fica intacto.
+        os.replace(tmp, destino)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _catalogo_atual(paths: Paths) -> list[dict]:
@@ -368,6 +414,18 @@ def _catalogo_atual(paths: Paths) -> list[dict]:
         }
         for p in perfis
     ]
+
+
+def _comentarios_atuais(paths: Paths) -> dict:
+    """Anotações do catálogo em disco, para sobreviverem à reescrita."""
+    if not paths.catalog.exists():
+        return {}
+    try:
+        return extrair_comentarios(paths.catalog.read_text(encoding="utf-8"))
+    except OSError:
+        # Perder comentário é ruim; falhar o salvamento por causa disso
+        # seria pior.
+        return {}
 
 
 def _guardar_no_undo(paths: Paths, pid: str, marca: str) -> None:
@@ -406,7 +464,7 @@ def apply_profile(
     pid = validate_id(perfil.get("id"))
 
     outros = [p for p in _catalogo_atual(paths) if p["id"] != pid]
-    catalogo = render_toml(outros + [perfil])
+    catalogo = render_toml(outros + [perfil], _comentarios_atuais(paths))
 
     estado = _snapshot(paths, pid)
     try:
@@ -431,9 +489,76 @@ def remove_profile(pid: str, *, paths: Paths, marca: str = "removido", replace=o
 
     restantes = [p for p in _catalogo_atual(paths) if p["id"] != pid]
     try:
-        _escrever_atomico(paths.catalog, render_toml(restantes), 0o644, replace)
+        _escrever_atomico(
+            paths.catalog,
+            render_toml(restantes, _comentarios_atuais(paths)),
+            0o644,
+            replace,
+        )
         paths.conf(pid).unlink(missing_ok=True)
         paths.script(pid).unlink(missing_ok=True)
     except Exception as e:
         _restaurar(estado)
         raise ApplyError(f"falha ao remover o perfil {pid}: {e}") from e
+
+
+def extrair_comentarios(texto: str) -> dict:
+    """Levanta os comentários de um profiles.toml existente.
+
+    Devolve `{"topo": [linhas], "inline": {(id, campo): "# ..."}}`.
+
+    Só isso: comentários entre perfis ou depois do último campo não são
+    mapeados. É o suficiente para o caso que motivou o item — anotação no
+    cabeçalho e explicação no fim da linha de um campo — sem virar um parser
+    de TOML completo, que é justamente o que a stdlib não expõe.
+    """
+    topo: list[str] = []
+    inline: dict[tuple[str, str], str] = {}
+    perfil_atual: str | None = None
+    ainda_no_topo = True
+
+    for linha in texto.splitlines():
+        despido = linha.strip()
+
+        if despido.startswith("[[profile]]"):
+            ainda_no_topo = False
+            perfil_atual = None
+            continue
+
+        if ainda_no_topo:
+            if despido.startswith("#"):
+                # O marcador que nós mesmos escrevemos não é anotação humana;
+                # ele é reinserido por render_toml e duplicaria a cada ciclo.
+                if despido != MARCADOR:
+                    topo.append(despido)
+                continue
+            if despido:
+                ainda_no_topo = False
+
+        if "=" not in despido or despido.startswith("#"):
+            continue
+
+        campo, _, resto = despido.partition("=")
+        campo = campo.strip()
+
+        # Uma cerquilha dentro de string não abre comentário. Percorre o resto
+        # contando aspas para achar a que está de fato fora.
+        dentro = False
+        corte = None
+        anterior = ""
+        for i, ch in enumerate(resto):
+            if ch == '"' and anterior != "\\":
+                dentro = not dentro
+            elif ch == "#" and not dentro:
+                corte = i
+                break
+            anterior = ch
+
+        if campo == "id" and not dentro:
+            valor = resto[:corte] if corte is not None else resto
+            perfil_atual = valor.strip().strip('"')
+
+        if corte is not None and perfil_atual is not None:
+            inline[(perfil_atual, campo)] = resto[corte:].strip()
+
+    return {"topo": topo, "inline": inline}

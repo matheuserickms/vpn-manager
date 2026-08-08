@@ -10,6 +10,8 @@ conforto de interface; a que vale é a daqui.
 """
 
 import fcntl
+import os
+import shutil
 from pathlib import Path
 
 from .catalog import CatalogError, load_catalog
@@ -174,6 +176,103 @@ def _op_delete(req, paths, unit_ativa):
     return 0, resposta_ok({"id": pid})
 
 
+def _op_assume(req, paths, unit_ativa):
+    """Adota um .conf escrito à mão, transformando-o em perfil gerenciado.
+
+    Não é `update` disfarçado: aqui o arquivo de origem não foi escrito por
+    nós, pode ter diretivas que a interface não conhece, e o script de rotas
+    antigo (se houver) precisa sair de cena para não duplicar rota.
+    """
+    perfil = perfil_interno(req["perfil"])
+    pid = validate_id(perfil.get("id"))
+    conf = paths.conf(pid)
+
+    if not conf.exists():
+        return 1, resposta_erro("nao_encontrado", f"{conf} não existe", campo="id")
+
+    campos, preservar, gerenciado = _parse_conf(conf.read_text(encoding="utf-8"))
+    if gerenciado:
+        return 1, resposta_erro(
+            "ja_gerenciado",
+            f"{pid} já é gerenciado pela interface; use editar em vez de assumir",
+            campo="id",
+        )
+
+    # O ipparam antigo continua na memória do processo vivo. Somado a
+    # `persistent`, um redial voltaria com a configuração velha e sem as
+    # rotas novas — estado difícil de diagnosticar depois.
+    if unit_ativa(pid):
+        return 1, resposta_erro(
+            "perfil_ativo",
+            f"desconecte {pid} antes de assumir o gerenciamento",
+        )
+
+    # Decisão D3: o script manual antigo sai de cena, mas só com confirmação
+    # nominal — é a única coisa escrita à mão que esta operação remove.
+    confirmar = req.get("confirmar")
+    antigos = _scripts_manuais(paths, pid)
+    if antigos and not confirmar:
+        return 1, resposta_erro(
+            "confirmacao_necessaria",
+            "há script de rotas escrito à mão para este perfil; confirme o nome "
+            f"para movê-lo para o histórico: {', '.join(a.name for a in antigos)}",
+            campo="confirmar",
+        )
+    if antigos and confirmar not in {a.name for a in antigos}:
+        return 1, resposta_erro(
+            "confirmacao_invalida",
+            f"o nome informado não corresponde a nenhum script deste perfil",
+            campo="confirmar",
+        )
+
+    senha = req["perfil"].get("senha", SENTINELA_SENHA)
+    if senha == SENTINELA_SENHA:
+        # Assumir não pode exigir que o usuário lembre a senha que já está
+        # no arquivo.
+        senha = campos.get("password", "")
+
+    _mover_para_undo(paths, pid, antigos)
+    apply_profile(perfil, senha=senha, paths=paths, preservar=preservar)
+    return 0, resposta_ok({"id": pid, "preservadas": len(preservar)})
+
+
+def _scripts_manuais(paths: Paths, pid: str) -> list[Path]:
+    """Scripts de ip-up.d que mencionam este perfil e não são nossos."""
+    if not paths.ip_up_dir.exists():
+        return []
+    achados = []
+    for arquivo in sorted(paths.ip_up_dir.iterdir()):
+        if not arquivo.is_file() or arquivo.name.startswith("50vpnmgr-"):
+            continue
+        try:
+            texto = arquivo.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # A detecção é por menção ao ipparam do perfil — é o guard que
+        # todo script de ip-up.d usa para saber a qual túnel pertence.
+        # Script que instala rota sem citar o perfil passa despercebido;
+        # não há como adivinhar a intenção dele.
+        if pid in texto:
+            achados.append(arquivo)
+    return achados
+
+
+def _mover_para_undo(paths: Paths, pid: str, arquivos: list[Path]) -> None:
+    """Tira os scripts antigos do caminho sem apagá-los.
+
+    Dois scripts injetando rota para o mesmo túnel é exatamente a classe de
+    duplicata que este projeto existe para tornar visível.
+    """
+    if not arquivos:
+        return
+    destino = paths.undo_dir / f"{pid}-assumido"
+    destino.mkdir(parents=True, exist_ok=True)
+    os.chmod(paths.undo_dir, 0o700)
+    os.chmod(destino, 0o700)
+    for arquivo in arquivos:
+        shutil.move(str(arquivo), str(destino / arquivo.name))
+
+
 def _unit_ativa_real(pid: str) -> bool:
     import subprocess
 
@@ -214,9 +313,7 @@ def helper_main(stdin, stdout, *, paths: Paths, unit_ativa=None, lock_path: Path
         elif op == "delete":
             codigo, corpo = _op_delete(req, paths, unit_ativa)
         else:  # assume
-            codigo, corpo = 1, resposta_erro(
-                "nao_implementado", "assumir gerenciamento ainda não está disponível"
-            )
+            codigo, corpo = _op_assume(req, paths, unit_ativa)
 
     except ProtocolError as e:
         codigo, corpo = 1, resposta_erro("protocolo", str(e))

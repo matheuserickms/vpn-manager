@@ -10,6 +10,7 @@ from vpn_manager.profile_store import (
     Paths,
     apply_profile,
     remove_profile,
+    extrair_comentarios,
     render_conf,
     render_ip_up_script,
     render_toml,
@@ -481,3 +482,153 @@ class TestRemove:
         with pytest.raises(ValidationError):
             remove_profile("../../etc/passwd", paths=p)
         assert (p.conf_dir / "vpn-exemplo.conf").exists()
+
+
+# --------------------------------------------------------------------------
+# 3.3 — preservar comentários ao reescrever o catálogo
+# --------------------------------------------------------------------------
+
+CATALOGO_COM_COMENTARIOS = '''\
+# catálogo de perfis desta máquina
+# mantido à mão desde 2024
+
+[[profile]]
+id          = "vpn-exemplo"        # = nome do .conf e da instância systemd
+nome        = "Rede A"
+proposito   = "Serviços internos"
+redes       = ["10.0.0.0/24"]
+checks      = []
+'''
+
+
+class TestExtrairComentarios:
+    def test_pega_o_cabecalho_do_arquivo(self):
+        c = extrair_comentarios(CATALOGO_COM_COMENTARIOS)
+        assert c["topo"] == [
+            "# catálogo de perfis desta máquina",
+            "# mantido à mão desde 2024",
+        ]
+
+    def test_pega_comentario_no_fim_da_linha_de_um_campo(self):
+        c = extrair_comentarios(CATALOGO_COM_COMENTARIOS)
+        assert c["inline"][("vpn-exemplo", "id")] == "# = nome do .conf e da instância systemd"
+
+    def test_arquivo_sem_comentario_devolve_vazio(self):
+        c = extrair_comentarios('[[profile]]\nid = "vpn-exemplo"\n')
+        assert c["topo"] == []
+        assert c["inline"] == {}
+
+    def test_nao_confunde_cerquilha_dentro_de_string(self):
+        """`nome = "Rede #1"` não tem comentário nenhum."""
+        texto = '[[profile]]\nid = "vpn-exemplo"\nnome = "Rede #1"\n'
+        assert extrair_comentarios(texto)["inline"] == {}
+
+
+class TestRenderTomlComComentarios:
+    def test_recoloca_o_cabecalho(self):
+        c = extrair_comentarios(CATALOGO_COM_COMENTARIOS)
+        saida = render_toml([PERFIL], comentarios=c)
+        assert "# catálogo de perfis desta máquina" in saida
+
+    def test_recoloca_o_comentario_inline_no_campo_certo(self):
+        c = extrair_comentarios(CATALOGO_COM_COMENTARIOS)
+        saida = render_toml([PERFIL], comentarios=c)
+        linha_id = [ln for ln in saida.splitlines() if ln.startswith("id ")][0]
+        assert "# = nome do .conf e da instância systemd" in linha_id
+
+    def test_continua_sendo_toml_valido(self, tmp_path):
+        c = extrair_comentarios(CATALOGO_COM_COMENTARIOS)
+        destino = tmp_path / "profiles.toml"
+        destino.write_text(render_toml([PERFIL], comentarios=c), encoding="utf-8")
+        assert load_catalog(destino)[0].id == "vpn-exemplo"
+
+    def test_comentario_de_perfil_removido_nao_reaparece(self):
+        c = extrair_comentarios(CATALOGO_COM_COMENTARIOS)
+        outro = dict(PERFIL, id="vpn-exemplo-2")
+        saida = render_toml([outro], comentarios=c)
+        assert "nome do .conf" not in saida
+
+
+class TestApplyPreservaComentarios:
+    def test_comentarios_sobrevivem_a_criacao_de_outro_perfil(self, tmp_path):
+        """O caso que motivou este item: criar um perfil reescrevia o catálogo
+        inteiro e apagava as anotações de quem o mantinha à mão."""
+        p = paths_de_teste(tmp_path)
+        p.catalog.parent.mkdir(parents=True, exist_ok=True)
+        p.catalog.write_text(CATALOGO_COM_COMENTARIOS, encoding="utf-8")
+
+        apply_profile(dict(PERFIL, id="vpn-exemplo-2"), senha="x", paths=p)
+
+        texto = p.catalog.read_text()
+        assert "# catálogo de perfis desta máquina" in texto
+        assert "# = nome do .conf e da instância systemd" in texto
+        assert [x.id for x in load_catalog(p.catalog)] == ["vpn-exemplo", "vpn-exemplo-2"]
+
+
+# --------------------------------------------------------------------------
+# 6.1 — revisão de segurança: escrita não pode atravessar symlink
+# --------------------------------------------------------------------------
+
+
+class TestSymlink:
+    """Se um symlink for plantado no destino, a escrita não pode acabar no
+    alvo dele. O diretório é root-only na instalação real, então o vetor já
+    exige root — mas é defesa em profundidade, e barata."""
+
+    def test_apply_nao_escreve_atraves_de_symlink_no_conf(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        vitima = tmp_path / "vitima.txt"
+        vitima.write_text("conteudo original")
+        p.conf_dir.mkdir(parents=True)
+        (p.conf_dir / "vpn-exemplo.conf").symlink_to(vitima)
+
+        apply_profile(PERFIL, senha="s3nha", paths=p)
+
+        assert vitima.read_text() == "conteudo original"
+        assert "password = s3nha" in (p.conf_dir / "vpn-exemplo.conf").read_text()
+        assert not (p.conf_dir / "vpn-exemplo.conf").is_symlink()
+
+    def test_rollback_nao_escreve_atraves_de_symlink(self, tmp_path):
+        """O rollback restaura conteúdo; se o caminho virar symlink no meio
+        do caminho, restaurar não pode escrever no alvo."""
+        p = paths_de_teste(tmp_path)
+        apply_profile(PERFIL, senha="antiga", paths=p)
+
+        vitima = tmp_path / "vitima2.txt"
+        vitima.write_text("intocado")
+
+        real = os.replace
+        alvo_conf = p.conf(PERFIL["id"])
+
+        def falha_depois_de_plantar(src, dst):
+            if str(dst) == str(p.catalog):
+                alvo_conf.unlink()
+                alvo_conf.symlink_to(vitima)
+                raise OSError("disco cheio")
+            return real(src, dst)
+
+        with pytest.raises(ApplyError):
+            apply_profile(PERFIL, senha="nova", paths=p, replace=falha_depois_de_plantar)
+
+        assert vitima.read_text() == "intocado"
+
+    def test_rollback_preserva_o_modo_executavel_do_script(self, tmp_path):
+        """O script de ip-up.d precisa ser executável: run-parts ignora o que
+        não é. Um rollback que o restaurasse como 644 faria as rotas pararem
+        de ser instaladas — em silêncio, que é o pior modo de falhar."""
+        p = paths_de_teste(tmp_path)
+        apply_profile(PERFIL, senha="antiga", paths=p)
+        script = p.script(PERFIL["id"])
+        assert script.stat().st_mode & 0o111, "pré-condição: nasce executável"
+
+        real = os.replace
+
+        def falha_no_catalogo(src, dst):
+            if str(dst) == str(p.catalog):
+                raise OSError("disco cheio")
+            return real(src, dst)
+
+        with pytest.raises(ApplyError):
+            apply_profile(PERFIL, senha="nova", paths=p, replace=falha_no_catalogo)
+
+        assert script.stat().st_mode & 0o111, "rollback deixou o script sem +x"

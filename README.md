@@ -63,12 +63,16 @@ Se pedir senha (ou `pkcheck` devolver negado), a regra não está sendo lida —
 do arquivo (`ls -l /etc/polkit-1/rules.d/50-openfortivpn.rules`, tem que ser `-rw-r--r-- root root`)
 e `journalctl -u polkit -n 20`.
 
-### ADVERTÊNCIA DE MIGRAÇÃO
+### Se você já tem VPNs rodando à mão
 
-As VPNs que já estão em uso hoje rodam **fora do systemd** (processo `openfortivpn` solto, sem
-unit). Passá-las para a unit `openfortivpn@<perfil>.service` — pelo botão **Adotar** da janela —
-mata o processo avulso antes de subir a unit, e isso **derruba a conexão ativa**. Não faça essa
-migração durante um atendimento em curso: espere uma janela sem uso da VPN em questão.
+Um `openfortivpn` iniciado no terminal (`sudo openfortivpn -c ...`) aparece como
+**Fora do systemd**. O botão **Adotar** o passa para a unit
+`openfortivpn@<perfil>.service`, mas para isso mata o processo avulso antes de
+subir a unit — o que **derruba a conexão ativa**. Não faça durante um
+atendimento em curso.
+
+Depois de adotado, o perfil sobe com `systemctl start openfortivpn@<perfil>`,
+não segura o terminal e o log fica no `journalctl -u`.
 
 ## Como rodar
 
@@ -95,28 +99,69 @@ desenvolvimento" abaixo).
 Requer GTK4 + libadwaita (janela) e GTK3 + `gir1.2-ayatanaappindicator3-0.1` (indicador) instalados
 no sistema — não são dependências Python, são bindings GObject introspection.
 
-## Acrescentando uma quarta VPN
+## Acrescentando uma VPN
 
-Não mexe em código: edita `/etc/vpn-manager/profiles.toml` (o mesmo arquivo instalado pelo
-`install.sh`) e adiciona um bloco `[[profile]]`:
+Pela interface: botão **+** no cabeçalho da janela. O diálogo pede o gateway, o
+usuário, a senha, as redes que devem aparecer roteadas e as portas a verificar —
+e grava os três arquivos que um perfil precisa:
 
-```toml
-[[profile]]
-id          = "vpn-novo"                 # = nome do /etc/openfortivpn/<id>.conf e da unit systemd
-nome        = "Nome exibido na UI"
-proposito   = "Uma linha explicando pra que serve"
-redes       = ["10.0.0.0/24"]            # sub-redes que devem aparecer roteadas quando a VPN sobe
-checks      = [
-  { host = "10.0.0.10", porta = 443, rotulo = "Serviço X" },
-]
-```
+| Arquivo | Para quê |
+|---|---|
+| `/etc/openfortivpn/<id>.conf` | credenciais e opções do openfortivpn (root:root 600) |
+| `/etc/ppp/ip-up.d/50vpnmgr-<id>` | instala as rotas quando o túnel sobe |
+| `/etc/vpn-manager/profiles.toml` | o que a interface mostra e verifica |
 
-O `id` precisa bater com o nome do arquivo de configuração do `openfortivpn`
-(`/etc/openfortivpn/vpn-novo.conf`) — é a partir dele que o app monta o nome da unit
-(`openfortivpn@vpn-novo.service`). Depois de editar, não precisa reiniciar nada: janela e indicador
-releem o catálogo a cada atualização de estado (janela: toda vez que ⟳/Ctrl+R/F5 é acionado, ou ao
-fim de qualquer ação; indicador: a cada ciclo de 10s). Uma janela já aberta mostra a quarta VPN no
-próximo desses gatilhos, sem precisar fechar e reabrir.
+Escrever nesses caminhos exige root, então salvar pede a senha de administrador
+uma vez (`auth_admin_keep` — salvar um perfil não vira três prompts). Conectar e
+desconectar seguem sem senha: a pior consequência ali é um túnel a mais ou a
+menos, enquanto escrever em `ip-up.d` é **execução de código como root a cada
+conexão**.
+
+Restrições que a interface impõe de propósito:
+
+- **`id`** aceita 2 a 32 caracteres, minúsculas, dígitos e hífen. Sem ponto:
+  `run-parts` ignora silenciosamente arquivos com ponto no nome, e o script de
+  rotas nunca rodaria — o perfil subiria sem rota, sem erro nenhum.
+- **`set-routes`, `set-dns` e `pppd-ipparam`** não são editáveis. O app verifica
+  se as rotas esperadas apareceram na interface do túnel; `set-routes = 1`
+  quebraria esse contrato inteiro.
+- **Renomear** não existe. Mudaria o nome da unit, do `.conf` e do script de uma
+  vez; um perfil conectado ficaria órfão. Remova e crie de novo.
+- **Remover** exige digitar o `id`. É a única ação sem volta da interface.
+- **Editar um perfil conectado** funciona, mas o túnel de pé continua com a
+  configuração antiga em memória. O diálogo oferece reconectar — sem isso, a
+  edição não tem efeito.
+
+### Perfis que já existiam
+
+Um `.conf` escrito à mão continua funcionando como sempre. Para editá-lo pela
+interface, use **assumir gerenciamento**: as diretivas que o app não conhece
+(`persistent`, `half-internet-routes`, o que houver) são preservadas verbatim, e
+a senha do arquivo é reaproveitada — você não precisa lembrá-la.
+
+O script de rotas antigo é movido para `/var/lib/vpn-manager/undo/`, mediante
+confirmação pelo nome, para não ficarem dois scripts instalando rota no mesmo
+túnel. A detecção é por menção ao `ipparam`, que é o guard que todo script de
+`ip-up.d` usa — um script que instala rota sem citar o perfil passa despercebido
+e continua rodando ao lado do novo.
+
+Assumir exige o perfil desconectado: o `ipparam` antigo segue na memória do
+processo vivo e, com `persistent`, um redial voltaria com a configuração velha.
+
+### Onde fica a senha, e o que isso protege
+
+No `.conf`, em texto puro, root:root 600 — como sempre foi. A alternativa óbvia
+(keyring da sessão) seria **pior** contra a ameaça mais realista: qualquer
+processo rodando como você lê o keyring destravado, enquanto o `.conf` exige
+root. E a unit sobe como root, fora da sessão, onde não há keyring nenhum.
+
+O que isso **não** protege: alguém que roube o notebook e leia o disco. Essa é
+responsabilidade do **LUKS**, não deste aplicativo. Se o disco não estiver
+cifrado, a senha da VPN está legível para quem tiver o hardware em mãos.
+
+Editar manualmente também continua possível — o app relê o catálogo a cada
+atualização de estado (janela: ⟳/Ctrl+R/F5 ou fim de qualquer ação; indicador: a
+cada 10 s), então uma janela aberta mostra o perfil novo no próximo gatilho.
 
 ## CLI
 

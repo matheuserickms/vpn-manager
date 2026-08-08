@@ -56,7 +56,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
 - [x] **1.3 `profile_store.py`: plano de aplicação com snapshot e rollback (M)**
       Snapshot em `/var/lib/vpn-manager/undo/`, escrita em temporário no mesmo
-      diretório com `O_NOFOLLOW` + `os.replace`, catálogo por último — o perfil
+      diretório + `os.replace`, catálogo por último — o perfil
       só fica visível quando os três artefatos existem. Rollback em ordem
       inversa. Pior caso é órfão invisível, nunca perfil visível quebrado. — §7
       *Aceite:* testes com `Paths` injetável apontando para `tmp_path`, injetando
@@ -105,7 +105,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       *Aceite:* nenhum caminho envolvido na execução root é gravável pelo
       usuário; verificar com `find -writable`.
 
-- [ ] **3.3 Preservar comentários ao reescrever o catálogo (P)** — descoberto
+- [x] **3.3 Preservar comentários ao reescrever o catálogo (P)** — descoberto
       durante a validação da Fase 3
       `render_toml` reescreve `profiles.toml` inteiro e descarta comentários. Na
       validação em `/etc` de verdade, um comentário inline do arquivo real foi
@@ -140,7 +140,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
 ## Fase 5 — Migração
 
-- [ ] **5.1 Assumir gerenciamento de perfil manual (M)**
+- [x] **5.1 Assumir gerenciamento de perfil manual (M)**
       Marcador na primeira linha dos artefatos gerenciados. Linhas desconhecidas
       do `.conf` preservadas verbatim — não destruir o que a UI não entende.
       Exige perfil desconectado: o `ipparam` antigo em memória somado a
@@ -151,10 +151,10 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
 ## Fase 6 — Fechamento
 
-- [ ] **6.1 Revisão de segurança do helper (P)**
+- [x] **6.1 Revisão de segurança do helper (P)**
       A revisão mais dura do projeto, por ser código novo rodando como root.
       Percorrer a tabela de vetores da §5.3 item a item contra o código real.
-- [ ] **6.2 README e `install.sh` (P)**
+- [x] **6.2 README e `install.sh` (P)**
       Documentar o fluxo novo e dizer com todas as letras que a proteção contra
       roubo do notebook é o LUKS, não o app. — §4
 
