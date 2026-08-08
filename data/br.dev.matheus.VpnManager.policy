@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+
+<!--
+  Action própria para o helper que escreve a configuração dos perfis.
+
+  Por que uma action nova, em vez de reaproveitar a regra das units: o polkit
+  autoriza AÇÕES, não arquivos. Não existe uma action "escrever em /etc" para
+  se apoiar — sem um helper que defina a sua própria, a única alternativa
+  seria autorizar `pkexec` genérico, o que equivale a conceder "escreva
+  qualquer arquivo como root" para a sessão inteira.
+
+  A anotação exec.path amarra esta autorização a UM binário específico. Ele
+  vive em /usr/local/libexec, root:root, fora do $HOME — se apontasse para a
+  árvore do projeto, qualquer processo da sessão poderia editar o arquivo e
+  ganhar root no salvamento seguinte.
+-->
+<policyconfig>
+
+  <vendor>vpn-manager</vendor>
+  <vendor_url>https://github.com/matheuserickms/vpn-manager</vendor_url>
+
+  <action id="br.dev.matheus.vpn-manager.manage-profiles">
+    <description>Configurar perfis de VPN</description>
+    <description xml:lang="pt_BR">Configurar perfis de VPN</description>
+    <message>Autenticação é necessária para alterar a configuração das VPNs.</message>
+    <message xml:lang="pt_BR">Autenticação é necessária para alterar a configuração das VPNs.</message>
+
+    <!--
+      auth_admin_keep, e não "yes": criar ou editar um perfil grava um script
+      em /etc/ppp/ip-up.d/, que o pppd executa COMO ROOT a cada conexão.
+      Autorizar em silêncio daria essa capacidade a qualquer código rodando na
+      sessão. O "keep" evita que salvar um perfil vire três prompts seguidos.
+
+      Subir e derrubar uma VPN continua sem senha, pela regra 50-openfortivpn:
+      lá a pior consequência é um túnel a mais ou a menos, e é reversível.
+    -->
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/libexec/vpn-manager-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

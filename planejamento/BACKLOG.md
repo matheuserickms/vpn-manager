@@ -91,12 +91,12 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
 ## Fase 3 — Instalação
 
-- [ ] **3.1 Action polkit própria (P)**
+- [x] **3.1 Action polkit própria (P)**
       `data/br.dev.matheus.VpnManager.policy` com a action nova, anotação
       `exec.path` fixa e o valor de `allow_active` decidido em **D1**. — §5.1
       *Aceite:* `pkcheck` autoriza a action nova sem afetar a das units.
 
-- [ ] **3.2 Cópia congelada no `install.sh` (M)**
+- [x] **3.2 Cópia congelada no `install.sh` (M)**
       `profile_store.py` + `helper_main.py` para `/usr/local/lib/vpn-manager/`
       (root:root) e launcher em `/usr/local/libexec/vpn-manager-helper` que fixa
       `sys.path` só nessa cópia. **Nada que roda como root pode ser gravável
@@ -104,6 +104,16 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       instalador de novo. — §3.2
       *Aceite:* nenhum caminho envolvido na execução root é gravável pelo
       usuário; verificar com `find -writable`.
+
+- [ ] **3.3 Preservar comentários ao reescrever o catálogo (P)** — descoberto
+      durante a validação da Fase 3
+      `render_toml` reescreve `profiles.toml` inteiro e descarta comentários. Na
+      validação em `/etc` de verdade, um comentário inline do arquivo real foi
+      perdido (restaurado do backup na hora). Os dados sobrevivem; anotações
+      humanas, não. O `.conf` já preserva linhas desconhecidas via `preservar`;
+      o catálogo não tem equivalente.
+      *Aceite:* um `profiles.toml` com comentários sobrevive a um ciclo de
+      criar → remover outro perfil.
 
 ## Fase 4 — Interface
 

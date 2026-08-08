@@ -1,0 +1,31 @@
+#!/usr/bin/python3 -I
+"""Launcher do helper privilegiado. Instalado em /usr/local/libexec, root:root.
+
+O `-I` no shebang é parte da segurança, não estilo: ele roda o interpretador
+em modo isolado, que ignora PYTHONPATH, o diretório do script e o
+site-packages do usuário. Sem ele, quem controlasse o ambiente do processo
+conseguiria injetar um módulo dentro de um programa que roda como root.
+
+O sys.path é fixado na cópia congelada — nunca na árvore do projeto, que é
+gravável pelo usuário.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/usr/local/lib/vpn-manager")
+
+from vpn_manager.helper_main import helper_main  # noqa: E402
+from vpn_manager.profile_store import Paths  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(
+        helper_main(
+            sys.stdin,
+            sys.stdout,
+            paths=Paths(),
+            # Serializa escritas concorrentes: duas janelas salvando ao mesmo
+            # tempo não podem intercalar gravações nos mesmos três arquivos.
+            lock_path=Path("/run/vpn-manager-helper.lock"),
+        )
+    )

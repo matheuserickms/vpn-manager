@@ -46,6 +46,33 @@ ExecStart=/usr/bin/openfortivpn -c /etc/openfortivpn/%i.conf
 EOF
 sudo systemctl daemon-reload
 
+# --------------------------------------------------------------------------
+# Helper privilegiado: cópia CONGELADA, root:root, fora do $HOME.
+#
+# Esta é a invariante nº 1 do design: nada que roda como root pode ser
+# gravável pelo usuário. Os lançadores da janela apontam para a árvore do
+# projeto via PYTHONPATH, o que é conveniente para desenvolver — mas apontar
+# um executável root para lá seria escalada de privilégio pronta: qualquer
+# processo da sessão editaria o arquivo e ganharia root no salvamento
+# seguinte.
+#
+# O custo honesto disso: mudou um módulo do núcleo, tem que rodar este
+# instalador de novo para o helper enxergar a mudança.
+# --------------------------------------------------------------------------
+echo "==> helper privilegiado (cópia congelada em /usr/local)"
+sudo install -d -o root -g root -m 755 /usr/local/lib/vpn-manager/vpn_manager
+for modulo in __init__.py models.py catalog.py protocol.py profile_store.py helper_main.py; do
+  sudo install -o root -g root -m 644 \
+    "$SRC_DIR/vpn_manager/$modulo" "/usr/local/lib/vpn-manager/vpn_manager/$modulo"
+done
+sudo install -d -o root -g root -m 755 /usr/local/libexec
+sudo install -o root -g root -m 755 data/vpn-manager-helper /usr/local/libexec/vpn-manager-helper
+
+echo "==> action polkit do helper (escrita em /etc pede senha de admin)"
+sudo install -o root -g root -m 644 \
+  data/br.dev.matheus.VpnManager.policy \
+  /usr/share/polkit-1/actions/br.dev.matheus.VpnManager.policy
+
 echo "==> lançadores (Exec aponta para $SRC_DIR via PYTHONPATH — mover o projeto de"
 echo "    lugar exige rodar ./install.sh de novo para regravar os dois arquivos)"
 install -d -m 755 ~/.local/share/applications ~/.config/autostart
