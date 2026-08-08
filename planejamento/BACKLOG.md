@@ -11,30 +11,23 @@ Esforço: **P** ≈ uma sessão · **M** ≈ duas ou três · **G** ≈ mais que
 
 ---
 
-## Fase 0 — Decisões que bloqueiam o resto
+## Fase 0 — Decisões que bloqueiam o resto — DECIDIDA em 08/08/2026
 
-Nenhuma linha de código antes destas. Todas são do dono do projeto, não do
-design (§14).
-
-- [ ] **D1. Prompt de senha para escrita em /etc, ou clique silencioso?**
-      O design propõe `auth_admin_keep` na action nova e argumenta que escrever
-      em `ip-up.d` é execução de código como root a cada conexão — um `YES`
-      silencioso daria isso a qualquer código da sessão. A alternativa é uma
-      regra `rules.d` como a das units. **Recomendado: prompt.** — §5.1
-- [ ] **D2. Ratificar a senha em texto puro no `.conf` (root:root 600).**
-      Implica aceitar que proteção contra roubo do notebook é papel do LUKS, não
-      do app. O design mostra que libsecret seria pior contra a ameaça realista
-      e que systemd-creds não protege de root local. — §4
-- [ ] **D3. Quão agressivo é o "assumir gerenciamento"?**
-      Mover o script manual antigo para o diretório de undo (proposto) ou nunca
-      tocar nele e apenas instruir. É o único passo da migração que remove algo
-      escrito à mão. — §8
-- [ ] **D4. Congelar janela e indicador junto com o helper?**
-      O `install.sh` vai ganhar a mecânica de cópia congelada de qualquer jeito.
-      Recomendado sim, em tarefa separada — não bloqueia esta feature.
-- [ ] **D5. Exigir digitar o `id` para confirmar remoção?**
-      Proteção proporcional ou fricção exagerada para poucos perfis. Mantido no
-      design por ser a única ação sem volta. — §11
+- [x] **D1. Escrita em /etc pede senha de admin.** `allow_active = auth_admin_keep`
+      na action nova; `start`/`stop` de unit seguem sem senha. Motivo aceito:
+      escrever em `ip-up.d` é execução de código como root a cada conexão, e um
+      `YES` silencioso daria isso a qualquer código da sessão. — §5.1
+- [x] **D2. Senha em texto puro no `.conf`, root:root 600 — ratificado.**
+      Proteção contra roubo do notebook é responsabilidade do LUKS, não do app.
+      Vale a regra de manuseio: senha só por stdin, nunca argv; `read` devolve
+      sentinela e a senha nunca volta ao processo sem privilégio. — §4
+- [x] **D3. Assumir gerenciamento move o script manual antigo** para
+      `/var/lib/vpn-manager/undo/`, com confirmação nominal. Evita dois scripts
+      injetando rota para o mesmo túnel; é reversível. — §8
+- [ ] **D4. Congelar janela e indicador junto com o helper.** Não bloqueia esta
+      feature; fica como tarefa separada, a fazer depois da Fase 3.
+- [x] **D5. Remoção exige digitar o `id`.** É a única ação sem volta da
+      interface. — §11
 
 ---
 
@@ -42,7 +35,7 @@ design (§14).
 
 Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
 
-- [ ] **1.1 `profile_store.py`: validação (P)**
+- [x] **1.1 `profile_store.py`: validação (P)**
       Regras únicas, usadas depois nos dois lados da fronteira. `id` casando
       `^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$` — sem ponto, porque `run-parts` ignora
       silenciosamente arquivos com `.`; hífen só é permitido porque o drop-in
@@ -52,7 +45,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       *Aceite:* um teste por vetor da tabela de injeção da §5.3, todos falhando
       na validação.
 
-- [ ] **1.2 `profile_store.py`: serialização dos três artefatos (M)**
+- [x] **1.2 `profile_store.py`: serialização dos três artefatos (M)**
       Serializador do `.conf` (chave = valor por linha), do script de `ip-up.d`
       (template fixo, guard por `ipparam`, uma linha `ip route replace` por rede
       do catálogo) e um writer TOML mínimo — a stdlib só tem leitor. Redes vão
@@ -61,7 +54,7 @@ Tudo testável sem root e sem tocar em `/etc`. Nada aqui roda elevado.
       *Aceite:* round-trip — o TOML gerado é lido de volta por `tomllib` e por
       `load_catalog`, produzindo o `Profile` de origem.
 
-- [ ] **1.3 `profile_store.py`: plano de aplicação com snapshot e rollback (M)**
+- [x] **1.3 `profile_store.py`: plano de aplicação com snapshot e rollback (M)**
       Snapshot em `/var/lib/vpn-manager/undo/`, escrita em temporário no mesmo
       diretório com `O_NOFOLLOW` + `os.replace`, catálogo por último — o perfil
       só fica visível quando os três artefatos existem. Rollback em ordem
