@@ -1,5 +1,9 @@
 # Backlog — configuração de perfis pela interface
 
+> **Concluído em 08/08/2026.** Os 20 itens estão fechados. O que a
+> implementação descobriu e que não estava no design está anotado nos itens
+> 3.3 e 6.1 — vale ler antes de mexer no `profile_store`.
+
 Derivado de [`2026-08-07-configuracao-de-perfis-design.md`](2026-08-07-configuracao-de-perfis-design.md).
 As referências `§n` apontam para seções daquele documento.
 
@@ -24,8 +28,15 @@ Esforço: **P** ≈ uma sessão · **M** ≈ duas ou três · **G** ≈ mais que
 - [x] **D3. Assumir gerenciamento move o script manual antigo** para
       `/var/lib/vpn-manager/undo/`, com confirmação nominal. Evita dois scripts
       injetando rota para o mesmo túnel; é reversível. — §8
-- [ ] **D4. Congelar janela e indicador junto com o helper.** Não bloqueia esta
-      feature; fica como tarefa separada, a fazer depois da Fase 3.
+- [x] **D4. Janela e indicador NÃO são congelados** — decidido em 08/08/2026,
+      depois da Fase 6.
+      Eles seguem rodando de `~/projetos/vpn-manager/src` via `PYTHONPATH`.
+      Congelar daria consistência, mas cobraria um `./install.sh` a cada
+      alteração de `window.py`/`indicator.py`/`editor.py` — e esquecer disso
+      produz depuração de código já corrigido, que é um custo pior que a
+      inconsistência. O **helper continua congelado**, que é o que importa:
+      é o único que roda como root, e é lá que a árvore gravável pelo
+      usuário seria escalada de privilégio.
 - [x] **D5. Remoção exige digitar o `id`.** É a única ação sem volta da
       interface. — §11
 

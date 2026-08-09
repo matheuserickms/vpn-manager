@@ -341,3 +341,25 @@ class TestAssume:
 
         assert codigo == 0
         assert anonimo.exists()
+
+
+class TestRequestIncompleto:
+    """O parse do protocolo valida FORMA: `perfil` é opcional lá, porque
+    `read` e `delete` não usam. Os verbos que precisam dele têm que dizer
+    isso, em vez de estourar KeyError e virar um 'erro interno' sem sentido
+    para quem está do outro lado."""
+
+    @pytest.mark.parametrize("op", ["create", "update", "assume"])
+    def test_verbo_que_exige_perfil_recusa_com_mensagem_util(self, tmp_path, op):
+        codigo, resp = chamar({"versao": VERSAO, "op": op}, paths_de_teste(tmp_path))
+
+        assert codigo == 1
+        assert resp["erro"] != "interno", "KeyError disfarçado de erro interno"
+        assert "perfil" in resp["detalhe"].lower()
+
+    @pytest.mark.parametrize("op", ["read", "delete"])
+    def test_verbo_que_exige_id_recusa_sem_id(self, tmp_path, op):
+        codigo, resp = chamar({"versao": VERSAO, "op": op}, paths_de_teste(tmp_path))
+
+        assert codigo == 1
+        assert resp["erro"] != "interno"

@@ -304,6 +304,16 @@ def helper_main(stdin, stdout, *, paths: Paths, unit_ativa=None, lock_path: Path
         req = parse_request(stdin.read())
         op = req["op"]
 
+        # O parse do protocolo valida forma, e `perfil` é opcional lá
+        # porque `read` e `delete` não usam. Sem esta guarda, os verbos
+        # que precisam dele estouravam KeyError e a resposta virava
+        # "erro interno" — inútil para quem está do outro lado.
+        if op in ("create", "update", "assume") and not req.get("perfil"):
+            stdout.write(
+                resposta_erro("perfil_ausente", f"a operação {op} exige o campo perfil")
+            )
+            return 1
+
         if op == "create":
             codigo, corpo = _op_create(req, paths)
         elif op == "read":
