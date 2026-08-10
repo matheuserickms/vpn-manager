@@ -656,16 +656,18 @@ class VpnWindow(Adw.ApplicationWindow):
             from .editor_form import form_de_leitura
 
             try:
-                form = form_de_leitura(profile_client.read(pid))
+                resposta = profile_client.read(pid)
+                form = form_de_leitura(resposta)
+                gerenciado = resposta.get("gerenciado", True)
                 erro = None
             except Exception as e:  # noqa: BLE001
-                form, erro = None, e
-            GLib.idle_add(self._abrir_editor_com, form, erro, estado)
+                form, gerenciado, erro = None, True, e
+            GLib.idle_add(self._abrir_editor_com, form, erro, estado, gerenciado)
 
         import threading
         threading.Thread(target=trabalho, daemon=True).start()
 
-    def _abrir_editor_com(self, form, erro, estado):
+    def _abrir_editor_com(self, form, erro, estado, gerenciado=True):
         from .editor import EditorPerfil
         from .editor_form import oferecer_reconectar
 
@@ -681,6 +683,8 @@ class VpnWindow(Adw.ApplicationWindow):
             # conexão viva continua com a configuração antiga em memória.
             # Sem reconectar, a edição não tem efeito nenhum.
             reconectar_apos_salvar=oferecer_reconectar(estado),
+            # Perfil escrito à mão passa pelo `assume`, não pelo `update`.
+            gerenciado=gerenciado,
             ao_salvar=self._depois_de_salvar,
         ).present()
         return GLib.SOURCE_REMOVE
@@ -696,6 +700,37 @@ class VpnWindow(Adw.ApplicationWindow):
                 self._acao(status, "restart")
                 return
         self.refresh()
+
+    def pedir_confirmacao_de_assume(self, editor, mensagem: str):
+        """O helper achou um script de rotas escrito à mão e quer autorização
+        para movê-lo. É a única coisa manual que assumir remove, então a
+        pergunta é explícita e nomeia o arquivo."""
+        import re
+
+        nomes = re.findall(r"\b\d\d[\w.-]+", mensagem)
+        nome = nomes[-1] if nomes else None
+
+        dialogo = Adw.AlertDialog(
+            heading="Assumir este perfil?",
+            body=(
+                f"{mensagem}\n\n"
+                "Ele é movido para /var/lib/vpn-manager/undo/ — não é apagado."
+                if nome
+                else mensagem
+            ),
+        )
+        dialogo.add_response("cancelar", "Cancelar")
+        dialogo.add_response("mover", "Mover e assumir")
+        dialogo.set_response_appearance("mover", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialogo.set_default_response("cancelar")
+        dialogo.set_close_response("cancelar")
+
+        def respondeu(_d, resposta):
+            if resposta == "mover" and nome:
+                editor.confirmar_e_salvar(nome)
+
+        dialogo.connect("response", respondeu)
+        dialogo.present(self)
 
     def avisar(self, mensagem: str):
         """Toast de erro. Usado pelo editor, que não tem acesso ao overlay."""

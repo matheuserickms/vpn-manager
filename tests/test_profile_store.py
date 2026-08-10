@@ -632,3 +632,26 @@ class TestSymlink:
             apply_profile(PERFIL, senha="nova", paths=p, replace=falha_no_catalogo)
 
         assert script.stat().st_mode & 0o111, "rollback deixou o script sem +x"
+
+
+class TestOrdemDoCatalogo:
+    """Editar um perfil não pode reordenar a lista: a ordem é como o usuário
+    organizou o arquivo, e a janela a reflete."""
+
+    def test_editar_mantem_a_posicao(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        for i in (1, 2, 3):
+            apply_profile(dict(PERFIL, id=f"vpn-{i}", nome=f"Rede {i}"), senha="x", paths=p)
+        assert [x.id for x in load_catalog(p.catalog)] == ["vpn-1", "vpn-2", "vpn-3"]
+
+        apply_profile(dict(PERFIL, id="vpn-1", nome="Rede 1 editada"), senha="x", paths=p)
+
+        assert [x.id for x in load_catalog(p.catalog)] == ["vpn-1", "vpn-2", "vpn-3"]
+        assert load_catalog(p.catalog)[0].name == "Rede 1 editada"
+
+    def test_perfil_novo_vai_para_o_fim(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        apply_profile(dict(PERFIL, id="vpn-1"), senha="x", paths=p)
+        apply_profile(dict(PERFIL, id="vpn-2"), senha="x", paths=p)
+
+        assert [x.id for x in load_catalog(p.catalog)] == ["vpn-1", "vpn-2"]

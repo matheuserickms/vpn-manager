@@ -463,8 +463,17 @@ def apply_profile(
     script = render_ip_up_script(perfil)
     pid = validate_id(perfil.get("id"))
 
-    outros = [p for p in _catalogo_atual(paths) if p["id"] != pid]
-    catalogo = render_toml(outros + [perfil], _comentarios_atuais(paths))
+    # Editar substitui NO LUGAR; só perfil novo vai para o fim. A ordem do
+    # catálogo é como o usuário organizou o arquivo, e a janela a reflete —
+    # reordenar por causa de uma edição mexe em algo que ninguém pediu.
+    atuais = _catalogo_atual(paths)
+    posicao = next((i for i, p in enumerate(atuais) if p["id"] == pid), None)
+    if posicao is None:
+        lista = atuais + [perfil]
+    else:
+        lista = list(atuais)
+        lista[posicao] = perfil
+    catalogo = render_toml(lista, _comentarios_atuais(paths))
 
     estado = _snapshot(paths, pid)
     try:

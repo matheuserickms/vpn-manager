@@ -10,6 +10,16 @@ import types
 from test_window import _instalar_gi_falso
 
 
+class _ComSubtitulo:
+    """Só para as classes que de fato expõem set_subtitle no Adw real
+    (AdwActionRow, AdwExpanderRow). EntryRow e PasswordEntryRow NÃO expõem —
+    e o stub precisa refletir isso, senão dá confiança falsa: foi assim que
+    um AttributeError passou pelos testes e só apareceu na janela real."""
+
+    def set_subtitle(self, valor):
+        self._props["subtitle"] = valor
+
+
 class _Widget:
     def __init__(self, *a, **k):
         self._props = dict(k)
@@ -37,6 +47,9 @@ class _Widget:
     def set_text(self, valor):
         self._props["text"] = valor
 
+    def set_tooltip_text(self, valor):
+        self._props["tooltip"] = valor
+
     def set_sensitive(self, valor):
         self._props["sensitive"] = valor
 
@@ -49,9 +62,6 @@ class _Widget:
     def remove_css_class(self, nome):
         if nome in self._props.get("css", []):
             self._props["css"].remove(nome)
-
-    def set_subtitle(self, valor):
-        self._props["subtitle"] = valor
 
     def set_title(self, valor):
         self._props["title"] = valor
@@ -77,6 +87,27 @@ class _Widget:
     def set_content_width(self, v):
         pass
 
+    # Todos os métodos abaixo foram conferidos contra o Adw real antes de
+    # entrar aqui (ver o commit): um stub mais permissivo que a API de
+    # verdade é pior que stub nenhum, porque dá confiança falsa.
+    def set_content(self, filho):
+        self._props["content"] = filho
+
+    def add_response(self, id_, rotulo):
+        self._props.setdefault("respostas", []).append((id_, rotulo))
+
+    def set_response_appearance(self, id_, aparencia):
+        pass
+
+    def set_default_response(self, id_):
+        pass
+
+    def set_close_response(self, id_):
+        pass
+
+    def set_extra_child(self, filho):
+        self._props["extra"] = filho
+
     def set_content_height(self, v):
         pass
 
@@ -87,9 +118,12 @@ def instalar():
     if repo is None:  # gi real presente; nada a fazer
         return
 
-    for nome in ("EntryRow", "PasswordEntryRow", "ActionRow", "SwitchRow"):
-        if not hasattr(repo.Adw, nome):
-            setattr(repo.Adw, nome, type(nome, (_Widget,), {}))
+    # Sem set_subtitle, como no Adw real.
+    for nome in ("EntryRow", "PasswordEntryRow"):
+        setattr(repo.Adw, nome, type(nome, (_Widget,), {}))
+    # Com set_subtitle.
+    for nome in ("ActionRow", "SwitchRow"):
+        setattr(repo.Adw, nome, type(nome, (_ComSubtitulo, _Widget), {}))
 
     # As classes do stub original não têm a API acima; substitui as que o
     # editor usa por versões baseadas em _Widget.

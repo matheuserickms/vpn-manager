@@ -10,7 +10,11 @@ gi_stub.instalar()
 
 import pytest  # noqa: E402
 
-from vpn_manager.editor import EditorPerfil, confirmacao_valida  # noqa: E402
+from vpn_manager.editor import (  # noqa: E402
+    DialogoRemocao,
+    EditorPerfil,
+    confirmacao_valida,
+)
 from vpn_manager.editor_form import Form  # noqa: E402
 from vpn_manager.profile_client import ClientError  # noqa: E402
 
@@ -198,3 +202,117 @@ class TestConfirmacaoDeRemocao:
         """O id é minúsculo por construção; aceitar variação convidaria a
         confirmar no automático."""
         assert confirmacao_valida("VPN-EXEMPLO", "vpn-exemplo") is False
+
+
+class PaiFalso:
+    def __init__(self):
+        self.avisos = []
+
+    def avisar(self, mensagem):
+        self.avisos.append(mensagem)
+
+
+class TestMontagem:
+    """Com `pai=None` o diálogo não constrói widget nenhum — o que deixou
+    `_montar` inteiro sem cobertura, e um AttributeError chegou à janela
+    real. Estes testes constroem de verdade."""
+
+    @pytest.mark.parametrize("criando", [True, False])
+    def test_monta_sem_quebrar(self, criando):
+        EditorPerfil(pai=PaiFalso(), cliente=ClienteFalso(), form=FORM_OK, criando=criando)
+
+    def test_editando_monta_o_campo_de_senha(self):
+        """O caso exato que quebrou: na edição o campo de senha recebe uma
+        dica de 'deixe em branco para manter'."""
+        ed = EditorPerfil(pai=PaiFalso(), cliente=ClienteFalso(), form=FORM_OK, criando=False)
+        assert "senha" in ed._campos
+
+    def test_monta_o_dialogo_de_remocao(self):
+        class StatusFalso:
+            class profile:
+                id = "vpn-exemplo"
+                name = "Rede A"
+
+        DialogoRemocao(pai=PaiFalso(), status=StatusFalso(), cliente=ClienteFalso())
+
+
+class ClienteComAssume(ClienteFalso):
+    def __init__(self, erro=None, erro_assume=None):
+        super().__init__(erro)
+        self.erro_assume = erro_assume
+
+    def assume(self, perfil, *, senha, confirmar=None):
+        self.chamadas.append(("assume", perfil, senha, confirmar))
+        if self.erro_assume:
+            erro, self.erro_assume = self.erro_assume, None
+            raise erro
+        return {"ok": True}
+
+
+class TestPerfilNaoGerenciado:
+    """Editar um perfil configurado à mão precisa passar pelo `assume`: é ele
+    que tira o script de rotas antigo do caminho. Sem isso, ficam dois
+    scripts instalando rota para o mesmo túnel."""
+
+    def test_salvar_perfil_nao_gerenciado_chama_assume(self):
+        cliente = ClienteComAssume()
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=False, gerenciado=False
+        )
+
+        ed.salvar()
+
+        assert cliente.chamadas[0][0] == "assume"
+
+    def test_perfil_gerenciado_continua_usando_update(self):
+        cliente = ClienteComAssume()
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=False, gerenciado=True
+        )
+
+        ed.salvar()
+
+        assert cliente.chamadas[0][0] == "update"
+
+    def test_criar_nunca_usa_assume(self):
+        cliente = ClienteComAssume()
+        ed = EditorPerfil(pai=None, cliente=cliente, form=FORM_OK, criando=True)
+
+        ed.salvar()
+
+        assert cliente.chamadas[0][0] == "create"
+
+    def test_pedido_de_confirmacao_vira_mensagem_com_o_nome_do_script(self):
+        """O helper recusa e diz quais scripts encontrou; o usuário precisa
+        ver o nome para poder confirmar."""
+        cliente = ClienteComAssume(
+            erro_assume=ClientError(
+                "há script de rotas escrito à mão: 51foco",
+                codigo="confirmacao_necessaria",
+                campo="confirmar",
+            )
+        )
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=False, gerenciado=False
+        )
+
+        ed.salvar()
+
+        assert ed.confirmacao_pendente is not None
+        assert "51foco" in ed.mensagem_geral
+
+    def test_confirmar_reenvia_com_o_nome_do_script(self):
+        cliente = ClienteComAssume(
+            erro_assume=ClientError(
+                "há script: 51foco", codigo="confirmacao_necessaria", campo="confirmar"
+            )
+        )
+        ed = EditorPerfil(
+            pai=None, cliente=cliente, form=FORM_OK, criando=False, gerenciado=False
+        )
+        ed.salvar()
+
+        ed.confirmar_e_salvar("51foco")
+
+        assert cliente.chamadas[-1][0] == "assume"
+        assert cliente.chamadas[-1][3] == "51foco"

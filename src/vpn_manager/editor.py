@@ -52,7 +52,8 @@ class EditorPerfil:
 
     def __init__(self, *, pai, cliente=profile_client, form: Form | None = None,
                  criando: bool = True, ao_salvar=None,
-                 reconectar_apos_salvar: bool = False):
+                 reconectar_apos_salvar: bool = False,
+                 gerenciado: bool = True):
         self._pai = pai
         self._cliente = cliente
         self._form = form or form_vazio()
@@ -60,6 +61,12 @@ class EditorPerfil:
         self._ao_salvar = ao_salvar
         # Só faz sentido editando: um perfil recém-criado não tem túnel no ar.
         self._reconectar = reconectar_apos_salvar and not criando
+        # Perfil escrito à mão precisa passar pelo `assume`, que tira o
+        # script de rotas antigo do caminho. Editar direto deixaria dois
+        # scripts instalando rota para o mesmo túnel.
+        self._gerenciado = gerenciado
+        # Nome do script antigo que o helper pediu para confirmar.
+        self.confirmacao_pendente: str | None = None
 
         # Renomear muda o nome da unit, do .conf e do script; um perfil
         # conectado ficaria órfão. Está fora de escopo por decisão do design.
@@ -68,6 +75,8 @@ class EditorPerfil:
         self.mensagem_geral: str | None = None
 
         self._campos: dict[str, object] = {}
+        # Título original de cada campo, para restaurar quando o erro sai.
+        self._rotulos: dict[str, str] = {}
         self._dialogo = None
         if pai is not None:
             self._montar()
@@ -114,15 +123,21 @@ class EditorPerfil:
         self._dialogo.set_child(barra)
 
     def _linha(self, grupo, campo, rotulo, *, senha=False, sensivel=True):
+        # AdwEntryRow e AdwPasswordEntryRow NÃO têm set_subtitle — só
+        # AdwActionRow e AdwExpanderRow têm. Dica e erro vão no título e no
+        # tooltip, que existem em qualquer widget.
+        if senha and not self._criando:
+            rotulo = f"{rotulo} (em branco = manter a atual)"
+
         classe = Adw.PasswordEntryRow if senha else Adw.EntryRow
         linha = classe(title=rotulo)
         linha.set_text(getattr(self._form, campo))
         if not sensivel:
             linha.set_sensitive(False)
-        if senha and not self._criando:
-            linha.set_subtitle("deixe em branco para manter a atual")
+            linha.set_tooltip_text("o identificador não pode ser alterado")
         grupo.add(linha)
         self._campos[campo] = linha
+        self._rotulos[campo] = rotulo
 
     def _ler_form(self) -> Form:
         if not self._campos:
@@ -141,9 +156,18 @@ class EditorPerfil:
             self._marcar(erros)
             return
 
+        self._enviar(confirmar=None)
+
+    def confirmar_e_salvar(self, nome_do_script: str):
+        """Reenvia o `assume` autorizando mover o script antigo."""
+        self.confirmacao_pendente = None
+        self._enviar(confirmar=nome_do_script)
+
+    def _enviar(self, *, confirmar):
         perfil = perfil_do_form(self._form)
         senha = senha_para_envio(self._form, criando=self._criando)
         criando = self._criando
+        gerenciado = self._gerenciado
 
         def trabalho():
             # pkexec bloqueia enquanto o usuário digita a senha; isso não pode
@@ -151,6 +175,8 @@ class EditorPerfil:
             try:
                 if criando:
                     self._cliente.create(perfil, senha=senha)
+                elif not gerenciado:
+                    self._cliente.assume(perfil, senha=senha, confirmar=confirmar)
                 else:
                     self._cliente.update(perfil, senha=senha)
                 erro = None
@@ -177,6 +203,15 @@ class EditorPerfil:
                 self._ao_salvar(pid, reconectar=self._reconectar)
             return GLib.SOURCE_REMOVE
 
+        # O helper achou script manual e quer o nome confirmado. Não é erro
+        # de campo: é uma pergunta, e a resposta é do usuário.
+        if erro.codigo == "confirmacao_necessaria":
+            self.confirmacao_pendente = pid
+            self.mensagem_geral = str(erro)
+            if self._pai is not None:
+                self._pai.pedir_confirmacao_de_assume(self, str(erro))
+            return GLib.SOURCE_REMOVE
+
         campo = _traduzir_campo(erro.campo)
         if campo:
             self._marcar({campo: str(erro)})
@@ -191,9 +226,15 @@ class EditorPerfil:
         for campo, linha in self._campos.items():
             if campo in erros:
                 linha.add_css_class("error")
-                linha.set_subtitle(erros[campo])
+                # Sem subtitle disponível, a mensagem vai para o título e o
+                # tooltip: o título é o que se lê sem interagir, o tooltip
+                # cabe o texto inteiro quando a mensagem é longa.
+                linha.set_title(f"{self._rotulos[campo]} — {erros[campo]}")
+                linha.set_tooltip_text(erros[campo])
             else:
                 linha.remove_css_class("error")
+                linha.set_title(self._rotulos[campo])
+                linha.set_tooltip_text(None)
 
     def present(self):
         if self._dialogo is not None and self._pai is not None:

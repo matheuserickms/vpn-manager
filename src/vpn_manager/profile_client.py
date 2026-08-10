@@ -108,3 +108,24 @@ def update(perfil: dict, *, senha: str | None, run=subprocess.run) -> dict:
 
 def delete(pid: str, *, run=subprocess.run) -> dict:
     return _chamar({"versao": VERSAO, "op": "delete", "id": pid}, run)
+
+
+def assume(perfil: dict, *, senha: str | None, confirmar: str | None = None,
+           run=subprocess.run) -> dict:
+    """Adota um perfil configurado à mão.
+
+    `senha=None` reaproveita a que já está no `.conf` — assumir não deve
+    exigir que o usuário lembre uma senha que já está no arquivo.
+
+    `confirmar` é o NOME do script de rotas antigo. Sem ele, o helper recusa
+    com `confirmacao_necessaria` e devolve os nomes encontrados: mover algo
+    escrito à mão exige confirmação explícita.
+    """
+    payload = {
+        "versao": VERSAO,
+        "op": "assume",
+        "perfil": {**perfil, "senha": senha if senha is not None else SENTINELA_SENHA},
+    }
+    if confirmar is not None:
+        payload["confirmar"] = confirmar
+    return _chamar(payload, run)

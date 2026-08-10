@@ -150,7 +150,19 @@ def _op_update(req, paths):
     if not paths.conf(pid).exists():
         return 1, resposta_erro("nao_encontrado", f"{pid} não existe", campo="id")
 
-    campos, preservar, _ = _parse_conf(paths.conf(pid).read_text(encoding="utf-8"))
+    campos, preservar, gerenciado = _parse_conf(paths.conf(pid).read_text(encoding="utf-8"))
+
+    # Sem esta checagem, editar um perfil manual gerava o script
+    # gerenciado e deixava o antigo no lugar: dois scripts instalando rota
+    # para o mesmo túnel. O `create` já recusava caso análogo; o `update`
+    # não fazia o equivalente.
+    if not gerenciado:
+        return 1, resposta_erro(
+            "nao_gerenciado",
+            f"{pid} foi configurado à mão; use assumir gerenciamento antes de editar "
+            "pela interface",
+            campo="id",
+        )
 
     senha = req["perfil"].get("senha", SENTINELA_SENHA)
     if senha == SENTINELA_SENHA:
@@ -210,7 +222,7 @@ def _op_assume(req, paths, unit_ativa):
     # Decisão D3: o script manual antigo sai de cena, mas só com confirmação
     # nominal — é a única coisa escrita à mão que esta operação remove.
     confirmar = req.get("confirmar")
-    antigos = _scripts_manuais(paths, pid)
+    antigos = _scripts_manuais(paths, pid, campos.get("pppd-ipparam"))
     if antigos and not confirmar:
         return 1, resposta_erro(
             "confirmacao_necessaria",
@@ -236,10 +248,20 @@ def _op_assume(req, paths, unit_ativa):
     return 0, resposta_ok({"id": pid, "preservadas": len(preservar)})
 
 
-def _scripts_manuais(paths: Paths, pid: str) -> list[Path]:
-    """Scripts de ip-up.d que mencionam este perfil e não são nossos."""
+def _scripts_manuais(paths: Paths, pid: str, ipparam: str | None = None) -> list[Path]:
+    """Scripts de ip-up.d que pertencem a este perfil e não são nossos.
+
+    Procura pelo id E pelo `pppd-ipparam` atual do .conf. Num perfil
+    escrito à mão os dois costumam divergir — `pppd-ipparam = exemplo`
+    para o perfil `vpn-exemplo` — e o script antigo casa pelo ipparam,
+    que é o que o pppd passa em $6. Procurar só pelo id não acha o que
+    importa.
+    """
     if not paths.ip_up_dir.exists():
         return []
+    termos = {pid}
+    if ipparam:
+        termos.add(ipparam)
     achados = []
     for arquivo in sorted(paths.ip_up_dir.iterdir()):
         if not arquivo.is_file() or arquivo.name.startswith("50vpnmgr-"):
@@ -248,11 +270,9 @@ def _scripts_manuais(paths: Paths, pid: str) -> list[Path]:
             texto = arquivo.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        # A detecção é por menção ao ipparam do perfil — é o guard que
-        # todo script de ip-up.d usa para saber a qual túnel pertence.
-        # Script que instala rota sem citar o perfil passa despercebido;
+        # Script que não cita nem o id nem o ipparam passa despercebido;
         # não há como adivinhar a intenção dele.
-        if pid in texto:
+        if any(termo in texto for termo in termos):
             achados.append(arquivo)
     return achados
 

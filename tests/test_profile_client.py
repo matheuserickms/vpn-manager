@@ -3,7 +3,15 @@ import json
 import pytest
 
 from vpn_manager.helper_main import SENTINELA_SENHA
-from vpn_manager.profile_client import HELPER, ClientError, create, delete, read, update
+from vpn_manager.profile_client import (
+    HELPER,
+    ClientError,
+    assume,
+    create,
+    delete,
+    read,
+    update,
+)
 from vpn_manager.protocol import VERSAO
 
 PERFIL = {
@@ -147,3 +155,26 @@ class TestRespostaDeSucesso:
         r = read("vpn-exemplo", run=run)
         assert r["perfil"]["id"] == "vpn-exemplo"
         assert r["preservar"] == ["half-internet-routes = 1"]
+
+
+class TestAssume:
+    def test_manda_o_verbo_assume(self):
+        run = Recorder()
+        assume(PERFIL, senha="x", run=run)
+        assert json.loads(run.inputs[0])["op"] == "assume"
+
+    def test_sem_confirmar_nao_manda_o_campo(self):
+        run = Recorder()
+        assume(PERFIL, senha="x", run=run)
+        assert "confirmar" not in json.loads(run.inputs[0])
+
+    def test_com_confirmar_manda_o_nome_do_script(self):
+        run = Recorder()
+        assume(PERFIL, senha="x", confirmar="51manual", run=run)
+        assert json.loads(run.inputs[0])["confirmar"] == "51manual"
+
+    def test_senha_none_vira_sentinela(self):
+        """Assumir normalmente reaproveita a senha do arquivo."""
+        run = Recorder()
+        assume(PERFIL, senha=None, run=run)
+        assert json.loads(run.inputs[0])["perfil"]["senha"] == SENTINELA_SENHA

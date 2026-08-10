@@ -363,3 +363,88 @@ class TestRequestIncompleto:
 
         assert codigo == 1
         assert resp["erro"] != "interno"
+
+
+class TestUpdateExigeGerenciado:
+    """O `create` já recusa .conf não catalogado apontando para 'assumir'.
+    O `update` não fazia a checagem equivalente: aceitava editar um perfil
+    manual, gerava o script gerenciado e deixava o script antigo no lugar —
+    dois scripts instalando rota para o mesmo túnel."""
+
+    def test_recusa_conf_sem_marcador_e_aponta_o_assume(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        p.conf_dir.mkdir(parents=True)
+        (p.conf_dir / "vpn-exemplo.conf").write_text(
+            "host = vpn.exemplo.com\nport = 443\nusername = u\npassword = p\n"
+        )
+
+        codigo, resp = chamar({"versao": VERSAO, "op": "update", "perfil": PERFIL_REQ}, p)
+
+        assert codigo == 1
+        assert "assumir" in resp["detalhe"].lower()
+
+    def test_nao_toca_no_conf_manual_ao_recusar(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        p.conf_dir.mkdir(parents=True)
+        original = "host = vpn.exemplo.com\nport = 443\nusername = u\npassword = p\n"
+        (p.conf_dir / "vpn-exemplo.conf").write_text(original)
+
+        chamar({"versao": VERSAO, "op": "update", "perfil": PERFIL_REQ}, p)
+
+        assert (p.conf_dir / "vpn-exemplo.conf").read_text() == original
+        assert not (p.ip_up_dir / "50vpnmgr-vpn-exemplo").exists()
+
+    def test_perfil_gerenciado_continua_editavel(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        chamar({"versao": VERSAO, "op": "create", "perfil": PERFIL_REQ}, p)
+
+        codigo, _ = chamar(
+            {"versao": VERSAO, "op": "update", "perfil": dict(PERFIL_REQ, nome="Editada")}, p
+        )
+
+        assert codigo == 0
+
+
+class TestDeteccaoPeloIpparamAntigo:
+    """Um perfil manual costuma ter `pppd-ipparam` diferente do id
+    (`exemplo` para o perfil `vpn-exemplo`), e o script antigo casa pelo
+    ipparam. Procurar só pelo id não acha o script que importa."""
+
+    def test_acha_script_que_usa_o_ipparam_antigo(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        p.conf_dir.mkdir(parents=True)
+        (p.conf_dir / "vpn-exemplo.conf").write_text(
+            "host = vpn.exemplo.com\nport = 443\nusername = u\npassword = p\n"
+            "set-routes = 0\npppd-ipparam = exemplo\n"
+        )
+        p.ip_up_dir.mkdir(parents=True)
+        antigo = p.ip_up_dir / "51exemplo"
+        # Note: cita "exemplo", nunca "vpn-exemplo".
+        antigo.write_text('#!/bin/sh\n[ "$6" = "exemplo" ] || exit 0\nip route add 10.0.0.0/24 dev $1\n')
+        antigo.chmod(0o755)
+
+        codigo, resp = chamar({"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ}, p)
+
+        assert codigo == 1
+        assert resp["erro"] == "confirmacao_necessaria"
+        assert "51exemplo" in resp["detalhe"]
+
+    def test_move_o_script_do_ipparam_antigo(self, tmp_path):
+        p = paths_de_teste(tmp_path)
+        p.conf_dir.mkdir(parents=True)
+        (p.conf_dir / "vpn-exemplo.conf").write_text(
+            "host = vpn.exemplo.com\nport = 443\nusername = u\npassword = p\n"
+            "pppd-ipparam = exemplo\n"
+        )
+        p.ip_up_dir.mkdir(parents=True)
+        antigo = p.ip_up_dir / "51exemplo"
+        antigo.write_text('#!/bin/sh\n[ "$6" = "exemplo" ] || exit 0\nip route add 10.0.0.0/24 dev $1\n')
+        antigo.chmod(0o755)
+
+        codigo, _ = chamar(
+            {"versao": VERSAO, "op": "assume", "perfil": PERFIL_REQ, "confirmar": "51exemplo"}, p
+        )
+
+        assert codigo == 0
+        assert not antigo.exists()
+        assert list(p.undo_dir.rglob("51exemplo"))
